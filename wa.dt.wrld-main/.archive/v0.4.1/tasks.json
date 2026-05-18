@@ -1,0 +1,197 @@
+[
+  {
+    "id": "051-20260127-qdrant-documentation",
+    "description": "Document Qdrant vector database setup and integration",
+    "type": "docs",
+    "priority": 1,
+    "status": "active",
+    "scope": "docs/qdrant",
+    "context": {
+      "files": [
+        "packages/qdrant/docker-compose.yml",
+        "packages/qdrant/README.md",
+        "packages/qdrant/.env.example"
+      ],
+      "docs": [
+        "WORKING_SESSION_NO_COMMIT.md"
+      ],
+      "summary": "Qdrant deployment config and README already created, needs docs/ folder documentation"
+    },
+    "tasks": [
+      "Create docs/qdrant/ directory",
+      "Create docs/qdrant/01-overview.md with Qdrant introduction and use cases",
+      "Create docs/qdrant/02-installation.md with local and production setup",
+      "Create docs/qdrant/03-n8n-integration.md with QdrantApi credentials and workflow examples",
+      "Create docs/qdrant/04-api-reference.md with common REST API operations",
+      "Update docs/README.md index to include Qdrant section"
+    ],
+    "verification": [
+      "docs/qdrant/01-overview.md exists and explains what Qdrant is",
+      "docs/qdrant/02-installation.md has both local docker and production deployment steps",
+      "docs/qdrant/03-n8n-integration.md has QdrantApi credential setup instructions",
+      "docs/qdrant/04-api-reference.md has curl examples for collections CRUD",
+      "docs/README.md links to Qdrant documentation"
+    ],
+    "passes": true
+  },
+  {
+    "id": "041-20260122-dashboard-prd-keycloak-and-min-nav",
+    "description": "Document Keycloak auth and minimal UI navigation",
+    "type": "docs",
+    "priority": 10,
+    "status": "active",
+    "milestone": "v0.6.0",
+    "scope": "spec",
+    "context": {
+      "files": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "PRD must explicitly describe Keycloak (OIDC/SSO), operator PATs, integration API keys for n8n, and the minimal-page split-pane UI model."
+    },
+    "tasks": [
+      "Add Authentication & Authorization section: Keycloak login for humans, integration API keys for automation, PATs for scripts-as-user",
+      "Update navigation to 3 routes max and specify tab/split-pane layouts enabling side-by-side viewing of sessions/events/logs/messages",
+      "Clarify that manual sends/takeover and routing edits are RBAC-gated and produce immutable audit_log entries"
+    ],
+    "verification": [
+      "spec/10-service-dashboard-prd.md contains explicit Keycloak + PAT + integration key model (not implied)",
+      "Navigation section contains only 3 routes and specifies 2-column/3-column layouts",
+      "Agent Takeover section explicitly states RBAC + audit requirements"
+    ],
+    "passes": true
+  },
+  {
+    "id": "052-20260127-media-proxy-endpoint",
+    "description": "Add media proxy endpoint to bypass atob base64 bug",
+    "type": "feature",
+    "priority": 1,
+    "status": "in_progress",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/dispatcher/whatsappApiClient.ts",
+        "packages/whatsapp-service/src/types/webhook.ts"
+      ],
+      "docs": [
+        "docs/whatsapp/02-api-reference.md",
+        "WORKING_SESSION_NO_COMMIT.md"
+      ],
+      "summary": "wwebjs-api atob bug prevents base64 media sending. Workaround: proxy external URLs through whatsapp-service so wwebjs-api can fetch media directly via MessageMediaFromURL."
+    },
+    "design": {
+      "problem": "whatsapp-web.js atob() fails on valid base64 in Puppeteer context. Direct curl with known-good base64 also fails - library-level bug.",
+      "solution": "Add media proxy that fetches external URLs, caches temporarily, serves via internal URL that wwebjs-api can access within Docker network.",
+      "architecture": "n8n/External -> POST /media/proxy {url} -> whatsapp-service fetches+caches -> returns internal URL -> wwebjs-api fetches via MessageMediaFromURL"
+    },
+    "subtasks": [
+      {
+        "id": "052.1-media-cache-types",
+        "description": "Define media cache types and config",
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/types/"
+          ],
+          "summary": "Define interfaces for cached media entries and proxy config"
+        },
+        "tasks": [
+          "Create types/media.ts with CachedMediaEntry interface (id, url, mimetype, filename, size, expiresAt, localPath)",
+          "Add MediaProxyConfig to shared/config.ts (MEDIA_CACHE_DIR, MEDIA_CACHE_TTL_SECONDS, MAX_MEDIA_SIZE_BYTES)",
+          "Export new types from types/index.ts"
+        ],
+        "verification": [
+          "npm run type-check passes",
+          "CachedMediaEntry and MediaProxyConfig exported and usable"
+        ],
+        "output": "Media proxy types defined in types/media.ts and shared/config.ts",
+        "passes": true
+      },
+      {
+        "id": "052.2-media-cache-service",
+        "description": "Implement media caching service",
+        "depends_on": [
+          "052.1-media-cache-types"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/types/media.ts"
+          ],
+          "prior_output": "Media proxy types from 052.1"
+        },
+        "tasks": [
+          "Create services/mediaCache.ts with MediaCacheService class",
+          "Implement fetchAndCache(url) - downloads to local file, returns cache entry",
+          "Implement get(id) - returns cached file path or null",
+          "Implement cleanup() - removes expired entries",
+          "Add periodic cleanup via setInterval",
+          "Add unit tests for MediaCacheService"
+        ],
+        "verification": [
+          "fetchAndCache downloads file and returns entry with localPath",
+          "get returns null for expired entries",
+          "npm test passes"
+        ],
+        "output": "MediaCacheService implemented in services/mediaCache.ts with 20 unit tests passing",
+        "passes": true
+      },
+      {
+        "id": "052.3-media-proxy-routes",
+        "description": "Add proxy routes and serve cached media",
+        "depends_on": [
+          "052.2-media-cache-service"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts",
+            "packages/whatsapp-service/src/services/mediaCache.ts"
+          ],
+          "prior_output": "MediaCacheService from 052.2"
+        },
+        "tasks": [
+          "Add POST /media/proxy route - accepts {url, filename?, mimetype?}, calls MediaCacheService, returns {proxyUrl, expiresAt}",
+          "Add GET /media/cache/:id route - serves cached file with correct Content-Type",
+          "Add API key authentication to proxy route",
+          "Add size limit validation before fetching",
+          "Update types/webhook.ts with SendMediaProxyData type"
+        ],
+        "verification": [
+          "POST /media/proxy with valid URL returns {proxyUrl: http://whatsapp-service:3000/media/cache/xxx}",
+          "GET /media/cache/:id serves file with correct mimetype",
+          "Request without API key returns 401"
+        ],
+        "output": "Media proxy endpoints added to index.ts: POST /media/proxy, GET /media/cache/:id, GET /media/stats",
+        "passes": true
+      },
+      {
+        "id": "052.4-integration-and-docs",
+        "description": "Test with wwebjs-api and document",
+        "depends_on": [
+          "052.3-media-proxy-routes"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts",
+            "docs/whatsapp/02-api-reference.md",
+            "docs/developer-api-guide.md"
+          ],
+          "prior_output": "Media proxy endpoints from 052.3"
+        },
+        "tasks": [
+          "Test full flow: proxy URL -> cache -> serve -> wwebjs-api MessageMediaFromURL",
+          "Update docs/whatsapp/02-api-reference.md with media proxy section",
+          "Update docs/developer-api-guide.md with media proxy usage",
+          "Add example curl commands for proxy workflow"
+        ],
+        "verification": [
+          "Image sent via proxy successfully delivers to WhatsApp",
+          "docs/whatsapp/ updated with media proxy documentation",
+          "docs/developer-api-guide.md has working examples"
+        ],
+        "output": "Media proxy tested and documented: Puppeteer verified PNG/JPEG serving, docs updated with curl examples",
+        "passes": true
+      }
+    ],
+    "changelog": "Added media proxy endpoint to bypass whatsapp-web.js atob bug",
+    "passes": true
+  }
+]

@@ -1,0 +1,39 @@
+name: wwebjs-api
+
+services:
+  api:
+    build: ../../vendor/whatsapp-api
+    container_name: wwebjs-api
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - wwebjs-sessions:/usr/src/app/sessions
+    expose:
+      - 3000
+    networks:
+      - default
+      - dokploy-network
+      - wa-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wwebjs-api.rule=Host(`wa-im.aziziafrica.com`)"
+      - "traefik.http.routers.wwebjs-api.entrypoints=websecure"
+      - "traefik.http.routers.wwebjs-api.tls.certResolver=letsencrypt"
+      - "traefik.http.services.wwebjs-api.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/ping', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  wwebjs-sessions:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+  dokploy-network:
+    external: true
+  wa-network:
+    external: true

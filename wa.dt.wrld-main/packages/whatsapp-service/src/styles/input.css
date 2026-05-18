@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+/* Configure content sources for Tailwind v4 */
+@source "../views/**/*.html";

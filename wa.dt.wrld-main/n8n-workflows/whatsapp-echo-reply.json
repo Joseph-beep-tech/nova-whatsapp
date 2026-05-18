@@ -1,0 +1,45 @@
+{
+  "name": "WhatsApp Echo Reply (DEPRECATED)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp/webhook",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [256, 304],
+      "webhookId": "whatsapp-webhook",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// DEPRECATED: Echo logic is now handled by Router workflow\n// This workflow remains for backwards compatibility and direct testing\n//\n// The Router workflow now:\n// 1. Checks if message is incoming (dataType === 'message_create' && !fromMe)\n// 2. Sends echo reply directly via wwebjs-api\n//\n// This endpoint can be used for testing webhook reception\n\nconst input = $input.first();\nconst webhookData = input.json;\nconst body = webhookData.body || webhookData;\nconst data = body.data || {};\nconst message = data.message || data || {};\n\nreturn [{\n  json: {\n    deprecated: true,\n    note: 'Echo functionality moved to Router workflow',\n    received: {\n      dataType: body.dataType || null,\n      sessionId: body.sessionId || null,\n      from: message.from || null,\n      messageBody: message.body || null,\n      timestamp: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "code-node",
+      "name": "Log & Deprecation Notice",
+      "type": "n8n-nodes-base.code",
+      "position": [480, 304],
+      "typeVersion": 2
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [[{"node": "Log & Deprecation Notice", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "{{INSTANCE_ID}}"
+  },
+  "id": "whatsapp-debug",
+  "tags": []
+}

@@ -1,0 +1,302 @@
+{
+  "name": "WhatsApp Send API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wa-api",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 300],
+      "webhookId": "wa-api-webhook",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "api-key-check",
+              "leftValue": "={{ $json.headers['x-api-key'] }}",
+              "rightValue": "={{ $env.API_KEY }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "validate-api-key",
+      "name": "Valid API Key?",
+      "type": "n8n-nodes-base.if",
+      "position": [420, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Unauthorized' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "unauthorized-response",
+      "name": "Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [640, 420],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and normalize the incoming payload\nconst body = $input.first().json.body || $input.first().json;\n\n// Session ID: use provided or default to 'mysession'\nconst sessionId = body.sessionId || 'mysession';\n\n// Format chatId (add @c.us if missing)\nlet chatId = body.chatId || '';\nif (chatId && !chatId.includes('@')) {\n  chatId = chatId.replace(/^\\+/, '') + '@c.us';\n}\n\n// Check if this is a media message\nconst hasMedia = !!(body.media && body.media.url);\nconst mediaUrl = hasMedia ? body.media.url : null;\nconst mediaCaption = hasMedia ? (body.media.caption || '') : '';\nconst mediaFilename = hasMedia ? (body.media.filename || '') : '';\nconst mediaMimetype = hasMedia ? (body.media.mimetype || '') : '';\n\n// Text content (for non-media messages)\nconst textContent = body.message || '';\n\nreturn [{\n  json: {\n    sessionId,\n    chatId,\n    hasMedia,\n    mediaUrl,\n    mediaCaption,\n    mediaFilename,\n    mediaMimetype,\n    textContent\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "position": [640, 180],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://whatsapp-service:3001/service/users/register",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.SERVICE_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, tags: ['SOMO', 'outgoing'] }) }}",
+        "options": {
+          "timeout": 10000,
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "register-outgoing-user",
+      "name": "Register Outgoing User",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [860, 380],
+      "typeVersion": 4.2,
+      "continueOnFail": true,
+      "notes": "Fire-and-forget: registers outgoing message recipients with tag ['SOMO', 'outgoing']"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-media-check",
+              "leftValue": "={{ $json.hasMedia }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "has-media",
+      "name": "Has Media?",
+      "type": "n8n-nodes-base.if",
+      "position": [860, 180],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://wwebjs-api:3000/client/sendMessage/{{ $json.sessionId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.WHATSAPP_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, contentType: 'MessageMediaFromURL', content: $json.mediaUrl, options: $json.mediaCaption ? { caption: $json.mediaCaption } : {} }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "send-media",
+      "name": "Send Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1080, 80],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://wwebjs-api:3000/client/sendMessage/{{ $json.sessionId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.WHATSAPP_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, contentType: 'string', content: $json.textContent }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-text",
+      "name": "Send Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1080, 280],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true }) }}",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1960, 140],
+      "typeVersion": 1.1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Valid API Key?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid API Key?": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Has Media?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Register Outgoing User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Media?": {
+      "main": [
+        [
+          {
+            "node": "Send Media",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Media": {
+      "main": [
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Text": {
+      "main": [
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ba2368f8-455b-4dfa-8260-5ad4496c714a",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "CBppy9-zrrQ51xjxBgQTy",
+  "tags": []
+}

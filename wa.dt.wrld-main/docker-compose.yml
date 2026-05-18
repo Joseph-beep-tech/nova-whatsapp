@@ -1,0 +1,167 @@
+# ==============================================
+# WhatsApp Bot - Local Development Stack
+# ==============================================
+#
+# Usage Examples:
+#
+# Default (service + infra, no whatsapp-api):
+#   docker compose up -d
+#
+# Full stack (include whatsapp-api):
+#   docker compose --profile api up -d
+#
+# whatsapp-service with hot reload (development):
+#   docker compose up -d mongodb qdrant
+#   docker compose up whatsapp-service  # foreground for logs
+#
+# Infrastructure only (for local npm run dev):
+#   docker compose up -d mongodb qdrant
+#
+# Rebuild after code changes:
+#   docker compose up -d --build whatsapp-service
+#
+# Watch mode (auto-rebuild on file changes):
+#   docker compose watch
+#
+# ==============================================
+
+services:
+  # Qdrant - Vector database for RAG and content search
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-wa}-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "${QDRANT_PORT:-16333}:6333"
+      - "${QDRANT_GRPC_PORT:-16334}:6334"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # WhatsApp API - Core service managing WhatsApp sessions
+  whatsapp-api:
+    build:
+      context: ./vendor/whatsapp-api
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-wa}-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - API_KEY=${API_KEY:-dev-local-key}
+      - BASE_WEBHOOK_URL=http://whatsapp-service:3001/service/events
+      - SESSIONS_PATH=/app/sessions
+      - MAX_ATTACHMENT_SIZE=10485760
+      - SET_MESSAGES_AS_SEEN=false
+      - ENABLE_SWAGGER_ENDPOINT=true
+      - RECOVER_SESSIONS=true
+      - RATE_LIMIT_MAX=1000
+      - RATE_LIMIT_WINDOW_MS=1000
+    volumes:
+      - whatsapp-sessions:/app/sessions:rw
+    ports:
+      - "${WHATSAPP_API_PORT:-3000}:3000"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/ping', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles: ["api"]
+
+  # MongoDB - State storage for webhook registrations and config
+  mongodb:
+    image: mongo:7-jammy
+    container_name: ${COMPOSE_PROJECT_NAME:-wa}-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=whatsapp-service
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER:-wabot}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-wabot_dev}
+    volumes:
+      - mongodb-data:/data/db
+    ports:
+      - "${MONGODB_PORT:-17017}:27017"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # WhatsApp Service - Event processing with tag-based routing
+  whatsapp-service:
+    build:
+      context: ./packages/whatsapp-service
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-wa}-service
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=3001
+      - API_KEY=${API_KEY:-test-local-key}
+      # Default assumes --profile api (local whatsapp-api). For local dev
+      # without the profile, set WHATSAPP_API_URL in .env to the server URL
+      # (e.g. https://wa-im.aziziafrica.com). API_KEY must match the server's.
+      - WHATSAPP_API_URL=${WHATSAPP_API_URL:-http://whatsapp-api:3000}
+      - MONGODB_URI=mongodb://${MONGO_USER:-wabot}:${MONGO_PASSWORD:-wabot_dev}@mongodb:27017/whatsapp-service?authSource=admin
+      - WHATSAPP_SERVICE_ADMIN_USER=${WHATSAPP_SERVICE_ADMIN_USER:-admin}
+      - WHATSAPP_SERVICE_ADMIN_PASSWORD=${WHATSAPP_SERVICE_ADMIN_PASSWORD:-admin123}
+      - QDRANT_URL=http://qdrant:6333
+      # RAG / LLM (optional — set OPENROUTER_API_KEY in .env to enable)
+      - ENABLE_QDRANT=${ENABLE_QDRANT:-false}
+      - ENABLE_LLM=${ENABLE_LLM:-false}
+      - ENABLE_EVENT_QUEUE=${ENABLE_EVENT_QUEUE:-false}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - LLM_MODEL=${LLM_MODEL:-x-ai/grok-4.1-fast}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-minilm-l6-v2}
+      - BRAND_NAME=${BRAND_NAME:-Azizi Africa}
+    # Development mode: run ts-node-dev for hot reloading
+    command: ["npx", "ts-node-dev", "--respawn", "--transpile-only", "src/index.ts"]
+    volumes:
+      - whatsapp-sessions:/app/sessions:ro
+    ports:
+      - "${SERVICE_PORT:-13001}:3001"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/service/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./packages/whatsapp-service/src
+          target: /app/src
+        - action: rebuild
+          path: ./packages/whatsapp-service/package.json
+
+volumes:
+  whatsapp-sessions:
+    driver: local
+  mongodb-data:
+    driver: local
+  qdrant-data:
+    driver: local
+
+networks:
+  whatsapp-network:
+    driver: bridge

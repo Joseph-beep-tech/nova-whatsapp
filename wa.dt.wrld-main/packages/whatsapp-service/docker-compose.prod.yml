@@ -1,0 +1,72 @@
+name: whatsapp-service
+
+services:
+  # MongoDB - State storage for webhook registrations and config
+  mongodb:
+    image: mongo:7-jammy
+    container_name: whatsapp-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=whatsapp-service
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # WhatsApp n8n Service - Dashboard and webhook bridge
+  whatsapp-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: whatsapp-service
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    environment:
+      # Core configuration
+      - NODE_ENV=production
+      - PORT=3001
+      - API_KEY=${API_KEY:?API_KEY is required in .env}
+      # WhatsApp API connection (uses wwebjs-api network)
+      - WHATSAPP_API_URL=${WHATSAPP_API_URL:-http://wwebjs-api:3000}
+      # MongoDB connection
+      - MONGODB_URI=mongodb://mongodb:27017/whatsapp-service
+      # Admin UI authentication
+      - WHATSAPP_SERVICE_ADMIN_USER=${WHATSAPP_SERVICE_ADMIN_USER:-admin}
+      - WHATSAPP_SERVICE_ADMIN_PASSWORD=${WHATSAPP_SERVICE_ADMIN_PASSWORD:?WHATSAPP_SERVICE_ADMIN_PASSWORD is required in .env}
+      # nginx-proxy configuration for wa.dater.world
+      - VIRTUAL_HOST=wa.dater.world
+      - VIRTUAL_PATH=/service
+      - VIRTUAL_PORT=3001
+      - LETSENCRYPT_HOST=wa.dater.world
+    networks:
+      - default
+      - proxy
+      - wwebjs-api_default
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  mongodb-data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+  proxy:
+    external: true
+  wwebjs-api_default:
+    external: true

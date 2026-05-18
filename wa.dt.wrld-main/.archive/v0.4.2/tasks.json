@@ -1,0 +1,55 @@
+[
+  {
+    "id": "055-20260128-fix-router-workflow-timeout",
+    "description": "Fix Router workflow timeout caused by non-existent Bot Trigger target",
+    "type": "fix",
+    "priority": 1,
+    "status": "completed",
+    "milestone": "v1.3",
+    "context": {
+      "files": [
+        "n8n-workflows/whatsapp-router.json",
+        "packages/whatsapp-n8n-nodes/"
+      ],
+      "docs": [
+        "docs/deployment/test-progress.md",
+        "docs/n8n/05-n8n-nodes-deployment.md",
+        "docs/deployment/055-router-fix-session.md"
+      ],
+      "summary": "Router workflow (L94Ziar3GQZLUU1V) forwards to Echo + Bot Trigger. Bot Trigger uses custom nodes not installed in n8n."
+    },
+    "tasks": [
+      "Option A: Remove Bot Trigger forward from Router workflow (quick fix)",
+      "Option B: Deploy custom whatsapp-n8n-nodes to production n8n - DONE",
+      "Update Router workflow in n8n UI or via database - URL already correct",
+      "Test Router workflow no longer times out - Bot Trigger works, Echo times out"
+    ],
+    "verification": [
+      "POST /webhook/whatsapp/router returns within 2s (not 10-15s) - PARTIAL: Bot Trigger works, Echo still slow",
+      "Incoming WhatsApp messages processed without delay - PARTIAL",
+      "Router results show all targets successful - NOT YET: aggregation issue"
+    ],
+    "notes": {
+      "root_cause": "Router forwards to /webhook/df4ce89f-fe74-4d2b-8146-2c47b69f0262/webhook which uses CUSTOM.whatsAppBotTrigger node not installed",
+      "affected_workflow": "Testing Trigger and Action Node (5hyhJ1ublFP7Ze6SAnV21) - NOW ACTIVE with webhook registered",
+      "custom_nodes_deployed": "2026-01-28 via git-based deployment with symlink",
+      "remaining_issue": "Echo workflow uses responseNode mode, times out when wwebjs-api is slow",
+      "wwebjs_webhook": "BASE_WEBHOOK_URL=http://n8n:5678/webhook/whatsapp/router"
+    },
+    "output": {
+      "completed": [
+        "Custom nodes deployed to /var/www/flow.dater.world/custom-nodes/n8n-nodes-whatsapp-bot",
+        "docker-compose.override.yml created with volume mount (git-tracked file unchanged)",
+        "Bot Trigger webhook now responds (returns firstEntryJson)",
+        "Testing Trigger workflow activates on n8n startup",
+        "Local deploy/n8n/ folder mirrors server structure for documentation"
+      ],
+      "follow_up_tasks": [
+        "Echo workflow responseNode mode causes slow response (separate task)",
+        "Router Aggregate Results parallel execution issue (separate task)"
+      ]
+    },
+    "changelog": "Deployed custom WhatsApp n8n nodes via git-based deployment; Bot Trigger webhook now works",
+    "passes": true
+  }
+]

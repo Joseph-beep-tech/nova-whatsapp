@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Sessions - Admin</title>
+  <link rel="stylesheet" href="/service/admin/styles.css">
+</head>
+<body class="bg-gray-50">
+  <div class="min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div class="flex justify-between items-center">
+          <div>
+            <h1 class="text-2xl font-bold text-gray-900">WhatsApp n8n Service Admin</h1>
+            <p class="text-sm text-gray-500 mt-1">Session Management</p>
+          </div>
+          <div class="flex gap-4">
+            <a href="/admin/logs" class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">View Logs</a>
+            <button onclick="refreshSessions()" class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Loading State -->
+      <div id="loading" class="text-center py-12">
+        <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <p class="mt-4 text-gray-600">Loading sessions...</p>
+      </div>
+
+      <!-- Error State -->
+      <div id="error" class="hidden">
+        <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div class="flex">
+            <div class="flex-shrink-0">
+              <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+              </svg>
+            </div>
+            <div class="ml-3">
+              <h3 class="text-sm font-medium text-red-800">Error loading sessions</h3>
+              <p id="error-message" class="mt-1 text-sm text-red-700"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sessions List -->
+      <div id="sessions-container" class="hidden">
+        <div id="sessions-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Sessions will be inserted here -->
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="hidden text-center py-12">
+          <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+          </svg>
+          <h3 class="mt-2 text-sm font-medium text-gray-900">No active sessions</h3>
+          <p class="mt-1 text-sm text-gray-500">Sessions will appear here when they are started.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const WHATSAPP_API_URL = window.location.origin.replace(':3001', ':3000');
+
+    async function loadSessions() {
+      const loading = document.getElementById('loading');
+      const error = document.getElementById('error');
+      const container = document.getElementById('sessions-container');
+      const grid = document.getElementById('sessions-grid');
+      const emptyState = document.getElementById('empty-state');
+
+      try {
+        loading.classList.remove('hidden');
+        error.classList.add('hidden');
+        container.classList.add('hidden');
+
+        // Note: This assumes whatsapp-api has a /sessions endpoint
+        // If not, this will need to be implemented or proxied
+        const response = await fetch(`${WHATSAPP_API_URL}/sessions`, {
+          headers: {
+            'x-api-key': 'API_KEY_PLACEHOLDER' // This should be handled server-side
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to load sessions: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const sessions = data.sessions || [];
+
+        loading.classList.add('hidden');
+        container.classList.remove('hidden');
+
+        if (sessions.length === 0) {
+          grid.classList.add('hidden');
+          emptyState.classList.remove('hidden');
+        } else {
+          grid.classList.remove('hidden');
+          emptyState.classList.add('hidden');
+          renderSessions(sessions);
+        }
+      } catch (err) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        document.getElementById('error-message').textContent = err.message;
+      }
+    }
+
+    function renderSessions(sessions) {
+      const grid = document.getElementById('sessions-grid');
+      grid.innerHTML = sessions.map(session => `
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div class="flex justify-between items-start mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">${escapeHtml(session.id || session.sessionId)}</h3>
+            <span class="px-2 py-1 text-xs rounded ${getStatusClass(session.status)}">
+              ${escapeHtml(session.status || 'unknown')}
+            </span>
+          </div>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between">
+              <span class="text-gray-500">Connected:</span>
+              <span class="text-gray-900">${session.connected ? 'Yes' : 'No'}</span>
+            </div>
+            ${session.user ? `
+            <div class="flex justify-between">
+              <span class="text-gray-500">User:</span>
+              <span class="text-gray-900">${escapeHtml(session.user.name || session.user.id)}</span>
+            </div>
+            ` : ''}
+            ${session.qr ? `
+            <div class="mt-4">
+              <a href="/admin/qr/${escapeHtml(session.id)}" class="text-blue-600 hover:text-blue-700 text-xs">View QR Code</a>
+            </div>
+            ` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function getStatusClass(status) {
+      const statusMap = {
+        'connected': 'bg-green-100 text-green-800',
+        'authenticated': 'bg-green-100 text-green-800',
+        'ready': 'bg-green-100 text-green-800',
+        'disconnected': 'bg-red-100 text-red-800',
+        'qr': 'bg-yellow-100 text-yellow-800',
+        'loading': 'bg-blue-100 text-blue-800'
+      };
+      return statusMap[status?.toLowerCase()] || 'bg-gray-100 text-gray-800';
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function refreshSessions() {
+      loadSessions();
+    }
+
+    // Auto-refresh every 10 seconds
+    setInterval(refreshSessions, 10000);
+
+    // Initial load
+    loadSessions();
+  </script>
+</body>
+</html>

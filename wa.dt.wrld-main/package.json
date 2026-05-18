@@ -1,0 +1,27 @@
+{
+  "name": "wa.dt.wrld",
+  "version": "0.8.0",
+  "private": true,
+  "workspaces": [
+    "packages/whatsapp-service",
+    "packages/whatsapp-n8n-nodes",
+    "packages/whatsapp-dashboard"
+  ],
+  "scripts": {
+    "dev:service": "npm run dev -w @dater/whatsapp-service",
+    "dev:nodes": "npm run dev -w @dater/n8n-nodes-whatsapp-bot",
+    "dev:dashboard": "npm run dev -w @dater/whatsapp-dashboard",
+    "dev:all": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:watch": "npm run test:watch --workspaces --if-present",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "lint:fix": "npm run lint:fix --workspaces --if-present",
+    "type-check": "npm run type-check --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

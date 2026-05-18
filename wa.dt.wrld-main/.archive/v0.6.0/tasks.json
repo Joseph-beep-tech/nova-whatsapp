@@ -1,0 +1,1167 @@
+[
+  {
+    "id": "013-20260112-verify-send-media-api",
+    "description": "Verify send media API (image/video/document)",
+    "type": "chore",
+    "milestone": "v0.7.0",
+    "tasks": [
+      "Test POST /client/sendMedia/{session} with image file",
+      "Test POST /client/sendMedia/{session} with video file",
+      "Test POST /client/sendMedia/{session} with document file",
+      "Verify media received correctly on WhatsApp"
+    ],
+    "verification": [
+      "Image displays correctly in WhatsApp chat",
+      "Video plays correctly in WhatsApp chat",
+      "Document downloads correctly from WhatsApp"
+    ],
+    "passes": false
+  },
+  {
+    "id": "014-20260112-verify-contact-operations",
+    "description": "Verify contact operations API",
+    "type": "chore",
+    "milestone": "v0.7.0",
+    "tasks": [
+      "Test GET /client/getContacts/{session}",
+      "Test POST /client/blockContact/{session}",
+      "Test POST /client/unblockContact/{session}",
+      "Test GET /client/getContactById/{session}"
+    ],
+    "verification": [
+      "Contact list returns valid data",
+      "Block operation succeeds and contact is blocked",
+      "Unblock operation succeeds and contact is unblocked"
+    ],
+    "passes": false
+  },
+  {
+    "id": "015-20260112-verify-group-operations",
+    "description": "Verify group operations API",
+    "type": "chore",
+    "milestone": "v0.7.0",
+    "tasks": [
+      "Test POST /client/createGroup/{session}",
+      "Test GET /client/getChats/{session} (filter groups)",
+      "Test group participant management endpoints",
+      "Test group settings modification"
+    ],
+    "verification": [
+      "Group created successfully on WhatsApp",
+      "Group list returns correct data",
+      "Participant operations work correctly"
+    ],
+    "passes": false
+  },
+  {
+    "id": "016-20260112-verify-message-operations",
+    "description": "Verify message operations API",
+    "type": "chore",
+    "milestone": "v0.7.0",
+    "tasks": [
+      "Test message reply functionality",
+      "Test message reaction endpoint",
+      "Test message forward endpoint",
+      "Test message delete/revoke endpoint"
+    ],
+    "verification": [
+      "Reply appears as threaded response in WhatsApp",
+      "Reaction emoji displays on message",
+      "Forwarded message appears in target chat"
+    ],
+    "passes": false
+  },
+  {
+    "id": "017-20260112-verify-webhook-callbacks",
+    "description": "Verify webhook callbacks",
+    "type": "chore",
+    "milestone": "v0.7.0",
+    "tasks": [
+      "Configure webhook URL in wwebjs-api",
+      "Test message event callbacks",
+      "Test group event callbacks",
+      "Test session event callbacks (auth, disconnect)"
+    ],
+    "verification": [
+      "Webhook receives message_create events",
+      "Webhook receives group join/leave events",
+      "Webhook receives session status changes"
+    ],
+    "passes": false
+  },
+  {
+    "id": "018-20260112-verify-multi-session",
+    "description": "Verify multi-session support",
+    "type": "chore",
+    "milestone": "v0.7.0",
+    "tasks": [
+      "Create second session via API",
+      "Authenticate second session with QR",
+      "Send message from each session independently",
+      "Test session isolation (messages don't cross sessions)"
+    ],
+    "verification": [
+      "Both sessions authenticated successfully",
+      "Messages sent from correct session accounts",
+      "Session status endpoints return correct per-session data"
+    ],
+    "passes": false
+  },
+  {
+    "id": "035-20260121-postgres-tenancy-foundation",
+    "description": "Postgres tenancy foundation for service state",
+    "type": "feature",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "024-20260120-multi-target-webhook-routing",
+      "042-20260122-dashboard-frontend-package"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/shared/config.ts",
+        "packages/whatsapp-service/src/utils/stateManager.ts",
+        "packages/whatsapp-service/src/index.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md",
+        "WORKING_SESSION_NO_COMMIT.md"
+      ],
+      "summary": "Replace Mongo stateManager with Postgres-backed tenancy + config state (migration-light spine + JSONB), and prepare all service features (router, dashboard, HITL) to be tenant-scoped."
+    },
+    "subtasks": [
+      {
+        "id": "035.1-research-and-design",
+        "description": "Choose migration tool and schema spine",
+        "tasks": [
+          "Research a migration approach (raw SQL migrations, minimal tooling) aligned with 'minimize migrations'",
+          "Define baseline schema spine for: tenants, api_keys, wa_sessions, webhook_registrations, audit_log",
+          "Define JSONB/event tables for: events, messages, conversation_state",
+          "Define scoping rules: how tenantId is derived from API key and how it scopes sessionId and routes"
+        ],
+        "verification": [
+          "Schema plan documented in task output fields and matches Appendix A in spec/10-service-dashboard-prd.md",
+          "No more than additive schema changes required for foreseeable PRD features",
+          "docs/architecture/ planned: explain tenancy spine tables and JSONB event storage approach."
+        ],
+        "output": "Migration tooling choice + baseline schema for tenancy + event/state storage",
+        "passes": false
+      },
+      {
+        "id": "035.2-implement-db-layer",
+        "description": "Add Postgres connection and migrations",
+        "depends_on": [
+          "035.1-research-and-design"
+        ],
+        "tasks": [
+          "Add Postgres config/env vars to whatsapp-service config (DATABASE_URL, pool settings)",
+          "Create baseline migrations for tenancy spine and event/state tables",
+          "Implement a small typed DB access layer (no ORM requirement)",
+          "Add API key hashing + lookup + last_used_at tracking"
+        ],
+        "verification": [
+          "Service boots successfully with Postgres configured and database connectivity verified.",
+          "Migrations apply cleanly on a fresh database without manual intervention steps.",
+          "API key auth still works and now resolves tenant context deterministically."
+        ],
+        "output": "Postgres-backed tenancy + auth foundation in whatsapp-service",
+        "passes": false
+      },
+      {
+        "id": "035.3-migrate-state-manager-usage",
+        "description": "Move webhook/config state from Mongo to Postgres",
+        "depends_on": [
+          "035.2-implement-db-layer"
+        ],
+        "tasks": [
+          "Replace MongoDB webhook registration storage with Postgres webhook_registrations",
+          "Replace MongoDB config storage with Postgres config JSONB (or tenant_config table)",
+          "Remove MONGODB_URI requirement from config when Postgres is enabled",
+          "Ensure existing webhook routing task 024 can consume the new storage API"
+        ],
+        "verification": [
+          "Webhook register/unregister/list endpoints work against Postgres in local development environment.",
+          "No MongoDB dependency is required for core routing and dashboard features.",
+          "Backward compatibility strategy is documented if Mongo is still supported temporarily."
+        ],
+        "output": "stateManager replaced (or dual-run) with Postgres-backed implementation",
+        "passes": false
+      }
+    ],
+    "changelog": "Added Postgres tenancy foundation for dashboard, routing, and state",
+    "passes": false
+  },
+  {
+    "id": "036-20260121-conversation-state-and-handoff",
+    "description": "Conversation state + external handoff endpoints",
+    "type": "feature",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "035-20260121-postgres-tenancy-foundation",
+      "042-20260122-dashboard-frontend-package"
+    ],
+    "blocked_by": "035-20260121-postgres-tenancy-foundation",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/types/"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Provide durable conversation state for stateless n8n workflows, plus a safe handoff model for external providers (ordering platforms or MCP-backed flows) with optimistic concurrency and audit logging."
+    },
+    "subtasks": [
+      {
+        "id": "036.1-state-api",
+        "description": "Implement /state read-write-reset endpoints",
+        "tasks": [
+          "Implement GET/PUT/DELETE /state/:sessionId/:chatId with tenant scoping",
+          "Add optimistic concurrency via expectedStateVersion (409 on mismatch)",
+          "Define minimal state envelope (stage/owner/provider/context/external) as per PRD Appendix A",
+          "Record state changes in audit_log and events tables"
+        ],
+        "verification": [
+          "Concurrent updates correctly return 409 conflicts when expectedStateVersion mismatches occur.",
+          "State changes create audit log entries with actor, target, before, and after.",
+          "Endpoints are tenant-scoped and do not allow cross-tenant reads under any key.",
+          "docs/dashboard/ planned: describe conversation state in simple terms for business users."
+        ],
+        "output": "State API contract implemented and usable from n8n",
+        "passes": false
+      },
+      {
+        "id": "036.2-handoff-api",
+        "description": "Implement /handoff start-advance-complete",
+        "depends_on": [
+          "036.1-state-api"
+        ],
+        "tasks": [
+          "Implement POST /handoff/:sessionId/:chatId/start to initialize external ownership and stage",
+          "Implement POST /handoff/:sessionId/:chatId/advance to update stage + patch state safely",
+          "Implement POST /handoff/:sessionId/:chatId/complete to finalize and return ownership to n8n/human",
+          "Add provider allowlists and signature verification for external callbacks (design + placeholder implementation)"
+        ],
+        "verification": [
+          "Stage transitions are recorded in events and audit_log with correlation identifiers.",
+          "Only allowed providers can update stage/owner, enforced by RBAC and allowlists.",
+          "Handoff endpoints enforce expectedStateVersion when provided, returning 409 on mismatch.",
+          "docs/dashboard/ planned: add an operator guide for handoff stages and ownership."
+        ],
+        "output": "External stage handoff supported for ordering/MCP flows",
+        "passes": false
+      }
+    ],
+    "changelog": "Added conversation state and external handoff endpoints for stateless workflows",
+    "passes": false
+  },
+  {
+    "id": "037-20260121-normalization-dedupe-correlation",
+    "description": "Normalize payloads and dedupe events",
+    "type": "improvement",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "024-20260120-multi-target-webhook-routing",
+      "042-20260122-dashboard-frontend-package"
+    ],
+    "blocked_by": "035-20260121-postgres-tenancy-foundation",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/types/webhook.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md",
+        "WORKING_SESSION_NO_COMMIT.md"
+      ],
+      "summary": "Make routing and UI stable by normalizing inbound event types/shapes, generating correlation IDs, and preventing duplicate forwards/sends across retries and multi-target fanout."
+    },
+    "tasks": [
+      "Implement a normalized internal event shape (dataType mapping, flatten key fields)",
+      "Generate and propagate x-correlation-id for all forwards and upstream calls",
+      "Derive stable eventId from WhatsApp message identifiers when available",
+      "Implement dedupe window (eventId + tenantId + sessionId) to prevent double-processing",
+      "Store normalized events for dashboard replay/debugging (JSONB event store)"
+    ],
+    "verification": [
+      "Both 'message' and 'message_create' style inputs route consistently",
+      "Duplicate inbound deliveries do not cause duplicate forwards",
+      "Correlation IDs appear in logs/events and can be searched",
+      "docs/dashboard/ planned: explain correlationId usage for business and technical users."
+    ],
+    "changelog": "Improved event normalization, correlation, and deduplication for reliable routing",
+    "passes": false
+  },
+  {
+    "id": "038-20260121-rbac-audit-redaction",
+    "description": "RBAC, audit log, and redaction policies",
+    "type": "security",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "042-20260122-dashboard-frontend-package",
+      "035-20260121-postgres-tenancy-foundation"
+    ],
+    "blocked_by": "035-20260121-postgres-tenancy-foundation",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/middleware/basicAuth.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Business ops requires RBAC and immutable audit trails. Add role/scopes and tenant-level redaction policies so logs/messages do not leak sensitive data."
+    },
+    "tasks": [
+      "Define roles + scopes model (creator_admin, tenant_admin, agent, automation_engineer, read_only)",
+      "Enforce tenant scoping and route-level authorization using API key scopes",
+      "Implement audit log entries for operator actions and sensitive API operations",
+      "Implement redaction policies applied at ingest + at display (mask raw payload when configured)",
+      "Add SSRF protections / allowlists for webhook target URLs"
+    ],
+    "verification": [
+      "Cross-tenant access is blocked for all APIs and admin UI reads",
+      "Audit entries are written for manual message send, takeover, and routing edits",
+      "Redaction rules are applied consistently and do not leak x-api-key or auth headers",
+      "docs/guides/user-management/ planned: explain RBAC roles and audited actions for admins."
+    ],
+    "changelog": "Added RBAC, audit logging, and redaction policies for secure operations",
+    "passes": false
+  },
+  {
+    "id": "039-20260121-alerts-and-notifications",
+    "description": "Alerts and operator notifications",
+    "type": "feature",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "042-20260122-dashboard-frontend-package"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/shared/config.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md",
+        "WORKING_SESSION_NO_COMMIT.md"
+      ],
+      "summary": "Add alerting for session disconnects/QR-required states, sustained routing failures, and delivery anomalies; expose in dashboard and optionally forward to external channels."
+    },
+    "tasks": [
+      "Define alert types (disconnect, qr_required, routing_failures, high_latency, duplicate_spike)",
+      "Implement alert detection using health endpoints + event stream metrics",
+      "Persist alerts per tenant and expose via API + real-time UI stream",
+      "Add configurable notification channels per tenant (webhook/email/slack - start with webhook)",
+      "Add alert acknowledgements and assignments for operators"
+    ],
+    "verification": [
+      "Disconnect events produce alerts visible in dashboard",
+      "Sustained n8n webhook failures produce alerts without spamming",
+      "Acknowledging an alert is audited and does not leak across tenants",
+      "docs/dashboard/ planned: add a business-user alerts guide and escalation steps."
+    ],
+    "changelog": "Added alerting and notifications for session and routing incidents",
+    "passes": false
+  },
+  {
+    "id": "040-20260121-retention-indexing-ops",
+    "description": "Retention, indexing, and ops defaults",
+    "type": "chore",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "035-20260121-postgres-tenancy-foundation"
+    ],
+    "blocked_by": "035-20260121-postgres-tenancy-foundation",
+    "context": {
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Define and implement default retention/indexing to keep Postgres performant while supporting dashboard timelines and audits."
+    },
+    "tasks": [
+      "Define retention defaults per tenant for events/messages/conversation_state (e.g. 7/30/90 day tiers)",
+      "Add required indexes for tenant/session/chat/correlation/event lookup paths",
+      "Implement periodic cleanup job (safe deletes) and document ops guidance",
+      "Add optional partitioning strategy plan if volumes require it"
+    ],
+    "verification": [
+      "Retention job can be run safely without breaking active conversations",
+      "Key queries remain performant with indexes present",
+      "Docs describe how to adjust retention per tenant"
+    ],
+    "changelog": "Added retention and indexing defaults for Postgres-backed dashboard data",
+    "passes": false
+  },
+  {
+    "id": "044-20260122-integration-keys-and-user-pats",
+    "description": "Add integration API keys and user PATs (tenant-scoped)",
+    "type": "security",
+    "priority": 13,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "035-20260121-postgres-tenancy-foundation",
+      "043-20260122-keycloak-bff-auth-service",
+      "038-20260121-rbac-audit-redaction"
+    ],
+    "blocked_by": "035-20260121-postgres-tenancy-foundation",
+    "context": {
+      "files": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Implement tenant-scoped API key storage and management. Raw keys are never stored, only hashes; keys are revocable/rotatable; PATs attribute actions to a user. Note: task 043 (Keycloak auth) is now complete."
+    },
+    "subtasks": [
+      {
+        "id": "044.1-research-key-scope-schema",
+        "description": "Define scope schema and rotation rules",
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "summary": "Scopes must cover: allowed sessionIds, allowed actions, allowed webhook target domains, and optional redaction policies."
+        },
+        "tasks": [
+          "Define scope JSON schema for api_keys.scopes and how it maps to RBAC permissions",
+          "Define rotation rules (create new, dual-run, revoke old) and audit requirements",
+          "Define separate key types: integration (n8n) vs PAT (user) and required metadata per type"
+        ],
+        "verification": [
+          "Scope schema exists as a concrete JSON shape with fields, types, and defaults.",
+          "Rotation flow is explicit and includes auditing on create, rotate, and revoke.",
+          "Key type differences are documented clearly (integration keys vs user PATs).",
+          "docs/guides/user-management/ planned: explain scopes in business-friendly language and examples clearly."
+        ],
+        "output": "Scope schema + rotation rules + key type model",
+        "passes": false
+      },
+      {
+        "id": "044.2-design-key-management-apis",
+        "description": "Design key management endpoints and RBAC rules",
+        "depends_on": [
+          "044.1-research-key-scope-schema"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "044.1 Scope schema + rotation rules + key type model",
+          "summary": "Define the admin APIs used by the dashboard to create/revoke/rotate integration keys and user PATs."
+        },
+        "tasks": [
+          "Define endpoints: POST /api/keys (create), GET /api/keys (list), DELETE /api/keys/:id (revoke), POST /api/keys/:id/rotate",
+          "Define which roles can manage which key types (creator_admin vs tenant_admin) and which roles can create PATs",
+          "Define response payloads: key metadata never returns raw secret; creation returns raw secret exactly once",
+          "Define how last_used_at is updated without logging secrets or creating a write hotspot"
+        ],
+        "verification": [
+          "Key management endpoints support create/list/revoke/rotate flows required by Admin UI.",
+          "RBAC rules for key management are explicit and least-privilege by default.",
+          "Creation contract returns the raw key once and it cannot be fetched again.",
+          "docs/guides/user-management/ planned: document key rotation steps and safety warnings clearly."
+        ],
+        "output": "Key management API contract + RBAC rules",
+        "passes": false
+      },
+      {
+        "id": "044.3-implement-key-management",
+        "description": "Implement key create/list/revoke/rotate endpoints",
+        "depends_on": [
+          "044.2-design-key-management-apis"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "044.2 Key management API contract + RBAC rules",
+          "summary": "Implement the key management API. Requires Postgres schema from task 035 and audit logging from task 038."
+        },
+        "tasks": [
+          "Implement key hashing and constant-time token comparison for authentication",
+          "Implement key CRUD + rotation endpoints with tenant scoping and RBAC gates",
+          "Write audit_log entries for create/revoke/rotate with actor attribution (user vs PAT vs integration)",
+          "Update last_used_at on successful authentication (without storing or logging raw token)"
+        ],
+        "verification": [
+          "Creating a key returns a raw secret once and stores only a hash.",
+          "Revoked keys are rejected with 403 and do not affect other tenants.",
+          "Audit log contains entries for create/revoke/rotate with correct actor attribution metadata.",
+          "docs/guides/user-management/ planned: include key lifecycle examples for admins and operators."
+        ],
+        "output": "Key management endpoints implemented with audit logging",
+        "passes": false
+      },
+      {
+        "id": "044.4-tests-and-docs",
+        "description": "Add key auth tests and documentation",
+        "depends_on": [
+          "044.3-implement-key-management"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "044.3 Key management endpoints implemented with audit logging",
+          "summary": "Add tests and docs for using integration keys (n8n) and PATs (scripts-as-user)."
+        },
+        "tasks": [
+          "Add tests: valid key authenticates; invalid key rejected; revoked key rejected; tenant scoping enforced",
+          "Document how to create integration keys and configure n8n to call the service with them",
+          "Document how to create PATs and use them from curl/CLI for manual sends and admin reads",
+          "Add documentation examples showing headers and expected responses (placeholders only)"
+        ],
+        "verification": [
+          "Run `npm test` and confirm key authentication tests pass consistently.",
+          "docs/guides/user-management/ planned: add curl examples for PAT usage and revocation.",
+          "docs/n8n/ planned: add integration key setup examples for n8n HTTP Request nodes.",
+          "Docs contain no real secrets; all examples use placeholders only."
+        ],
+        "output": "Key auth is tested and documented for operators and automation engineers",
+        "passes": false
+      }
+    ],
+    "changelog": "Added tenant-scoped integration keys and user PAT model for audited service actions",
+    "passes": false
+  },
+  {
+    "id": "045-20260122-realtime-stream-and-observability-api",
+    "description": "Implement real-time stream + observability API for dashboard",
+    "type": "feature",
+    "priority": 14,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "042-20260122-dashboard-frontend-package",
+      "037-20260121-normalization-dedupe-correlation",
+      "038-20260121-rbac-audit-redaction"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Provide APIs and a websocket stream so the dashboard can view sessions/logs/events/messages side-by-side with filters and correlation IDs."
+    },
+    "subtasks": [
+      {
+        "id": "045.1-design-stream-events",
+        "description": "Define stream event schema and filters",
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "summary": "Define the normalized event format and the client filtering contract (tenant/session/level/eventType/correlationId)."
+        },
+        "tasks": [
+          "Define EventEnvelope JSON: { tenantId, sessionId, eventType, level, eventId, correlationId, ts, payload }",
+          "Define log redaction rules applied before emit/storage (mask API keys, auth headers)",
+          "Define websocket channels or subscription messages for filtering to avoid flooding clients"
+        ],
+        "verification": [
+          "EventEnvelope includes correlation fields required by PRD and supports UI filtering.",
+          "Redaction rules are explicitly enumerated, including nested keys and headers.",
+          "Subscription/filtering protocol is defined so clients can request session-scoped streams.",
+          "docs/dashboard/ planned: explain how business users interpret event cards safely."
+        ],
+        "output": "Final websocket event envelope and filtering protocol",
+        "passes": false
+      },
+      {
+        "id": "045.2-implement-websocket-stream",
+        "description": "Implement websocket stream with tenant/session filtering",
+        "depends_on": [
+          "045.1-design-stream-events"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "045.1 Final websocket event envelope and filtering protocol",
+          "summary": "Integrate websocket server into Express and emit normalized events to authenticated dashboard clients."
+        },
+        "tasks": [
+          "Integrate a websocket server into the Express app (single port) and gate connections by user session/PAT",
+          "Implement subscription filtering by tenantId and optionally sessionId/eventType to control volume",
+          "Emit structured events for: inbound webhook received, routing decision, outbound send result, session lifecycle events, errors",
+          "Implement a circular buffer replay (last N events) for new connections"
+        ],
+        "verification": [
+          "Authenticated client receives events without refreshing the page in normal usage.",
+          "Unauthenticated client cannot connect to the websocket endpoint and receives 401/403.",
+          "Filtering by sessionId reduces events to only that session's events and logs.",
+          "Replay returns the last N events on connect for immediate context.",
+          "docs/dashboard/ planned: add a troubleshooting section for missing streams and filters."
+        ],
+        "output": "Websocket stream emitting tenant-scoped structured events",
+        "passes": false
+      },
+      {
+        "id": "045.3-add-observability-rest-endpoints",
+        "description": "Add REST endpoints for historical queries",
+        "depends_on": [
+          "045.2-implement-websocket-stream"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "045.2 Websocket stream emitting tenant-scoped structured events",
+          "summary": "Expose tenant-scoped REST endpoints for fetching historical events/logs/audit for split-pane views."
+        },
+        "tasks": [
+          "Implement GET /api/events with filters (sessionId, eventType, level, correlationId, time range) and pagination",
+          "Implement GET /api/audit with filters (action, actor, target, time range) and pagination for Admin pane",
+          "Decide and document whether 'logs' are stream-only or persisted; implement GET /api/logs if persisted"
+        ],
+        "verification": [
+          "GET /api/events returns paginated results and supports correlationId filtering reliably.",
+          "GET /api/audit is RBAC-gated, tenant-scoped, and returns consistent actor fields.",
+          "No endpoint can be used to read cross-tenant events/audits, even with guessing IDs.",
+          "docs/dashboard/ planned: document filters, pagination, and correlationId lookup patterns clearly."
+        ],
+        "output": "REST APIs for historical observability queries",
+        "passes": false
+      }
+    ],
+    "changelog": "Added real-time websocket stream and observability APIs for the dashboard",
+    "passes": false
+  },
+  {
+    "id": "046-20260122-hitl-conversations-and-agent-takeover",
+    "description": "Implement HITL conversations and agent takeover API",
+    "type": "feature",
+    "priority": 15,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "036-20260121-conversation-state-and-handoff",
+      "038-20260121-rbac-audit-redaction",
+      "045-20260122-realtime-stream-and-observability-api"
+    ],
+    "context": {
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Provide the server-side API for the 3-column conversation viewer: chat list, message history, and manual send (agent takeover) with RBAC and auditing."
+    },
+    "subtasks": [
+      {
+        "id": "046.1-research-message-sources",
+        "description": "Decide message source of truth (persist vs fetch)",
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts",
+            "spec/design-language/02-layout-and-navigation.md"
+          ],
+          "docs": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "summary": "Decide whether the service persists messages/events for UI or fetches message history on-demand from whatsapp-api."
+        },
+        "tasks": [
+          "List the exact fields required by the conversation UI (chat list preview, direction, source=user|n8n|agent, timestamps, executionId/correlationId)",
+          "Choose: (A) persist inbound/outbound messages in service DB (recommended for auditability) vs (B) fetch from whatsapp-api on-demand",
+          "Define minimal indexing/query requirements to support search by phone/chatId and pagination"
+        ],
+        "verification": [
+          "Decision is recorded with rationale (persist vs fetch) and retention boundaries.",
+          "Message schema includes bot/human distinction plus executionId and correlationId fields.",
+          "Query requirements cover search and pagination for chat list and message thread.",
+          "docs/dashboard/ planned: specify what data business users see vs technical users."
+        ],
+        "output": "HITL message source decision + required message/chat schema fields",
+        "passes": false
+      },
+      {
+        "id": "046.2-design-hitl-api-contract",
+        "description": "Define chats/messages/takeover API contracts",
+        "depends_on": [
+          "046.1-research-message-sources"
+        ],
+        "context": {
+          "docs": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "046.1 message source decision + schema fields",
+          "summary": "Define stable REST contracts used by the dashboard for left/center/right panes."
+        },
+        "tasks": [
+          "Define GET /api/chats (filters: status, assignedTo, search, sessionId) response fields needed for left pane",
+          "Define GET /api/chats/:chatId/messages (pagination + since) message envelope including source and correlation fields",
+          "Define POST /api/chats/:chatId/send (agent takeover) with required RBAC and audit semantics",
+          "Define endpoints for assignment/status/notes updates and their audit actions"
+        ],
+        "verification": [
+          "Contracts include enough info for 3-column UI without extra round trips.",
+          "Manual send endpoint requires authenticated user session or PAT and is tenant-scoped.",
+          "Every mutable action has a corresponding audit action definition and target shape.",
+          "docs/dashboard/ planned: write a HITL guide with safe, non-technical terminology."
+        ],
+        "output": "HITL REST API contract for chats/messages/takeover",
+        "passes": false
+      },
+      {
+        "id": "046.3-implement-hitl-apis",
+        "description": "Implement HITL endpoints with RBAC + audit",
+        "depends_on": [
+          "046.2-design-hitl-api-contract"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "046.2 HITL REST API contract",
+          "summary": "Implement endpoints and ensure every manual action is audited and appears in the realtime stream."
+        },
+        "tasks": [
+          "Implement chats and messages read endpoints (tenant/session scoped) with pagination",
+          "Implement manual send endpoint that proxies to whatsapp-api with correct x-api-key and session targeting",
+          "Ensure manual send bypasses n8n routing but still emits a structured event and audit_log entry",
+          "Enforce RBAC so only agent/tenant_admin/creator_admin can send takeover messages"
+        ],
+        "verification": [
+          "Manual send returns success and the message appears in WhatsApp for that chat.",
+          "Audit log contains an entry for manual send with actor and target metadata.",
+          "Realtime stream emits an event for manual send without leaking sensitive content.",
+          "When tenant redaction is enabled, message bodies are masked consistently everywhere."
+        ],
+        "output": "Working HITL APIs including agent takeover with audit + realtime visibility",
+        "passes": false
+      },
+      {
+        "id": "046.4-tests-and-docs",
+        "description": "Add tests and documentation for HITL APIs",
+        "depends_on": [
+          "046.3-implement-hitl-apis"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "046.3 Working HITL APIs",
+          "summary": "Add test coverage and document how agents use takeover and how automation engineers correlate messages to executions."
+        },
+        "tasks": [
+          "Add tests for RBAC gating (read_only cannot send; agent can send; cross-tenant blocked)",
+          "Add tests for audit entry creation for manual send",
+          "Update docs/ with HITL endpoints and example curl usage (PAT and session auth)"
+        ],
+        "verification": [
+          "Run `npm test` and confirm HITL tests pass reliably in CI environments.",
+          "docs/dashboard/ planned: add a business-user guide for takeover and approvals.",
+          "docs/guides/user-management/ planned: describe who can take over conversations and why.",
+          "Regression test proves manual send is audited, tenant-scoped, and RBAC gated."
+        ],
+        "output": "Tested and documented HITL conversation APIs",
+        "passes": false
+      }
+    ],
+    "changelog": "Added HITL conversations API with audited agent takeover messaging",
+    "passes": false
+  },
+  {
+    "id": "047-20260122-session-orchestration-dashboard-apis",
+    "description": "Add session orchestration and telemetry APIs",
+    "type": "feature",
+    "priority": 16,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "038-20260121-rbac-audit-redaction",
+      "045-20260122-realtime-stream-and-observability-api"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Expose tenant-scoped APIs for listing sessions, showing QR codes and telemetry, and performing safe actions (restart/logout/delete) with audit."
+    },
+    "subtasks": [
+      {
+        "id": "047.1-research-whatsapp-api-session-endpoints",
+        "description": "Map required session fields to whatsapp-api endpoints",
+        "context": {
+          "docs": [
+            "spec/10-service-dashboard-prd.md",
+            "docs/whatsapp/02-api-reference.md"
+          ],
+          "summary": "Confirm which upstream endpoints provide session list/status/QR/telemetry and note any gaps to proxy or implement."
+        },
+        "tasks": [
+          "List required session card fields (status, qrRequired, battery, signal, user/device info, timestamps)",
+          "Map each field to a whatsapp-api endpoint (or mark as 'not available')",
+          "Decide which session data is polled vs emitted via stream events"
+        ],
+        "verification": [
+          "A complete field-to-endpoint mapping exists and contains no 'TBD' placeholders.",
+          "Any upstream gaps are documented as explicit follow-up requirements with owners.",
+          "Polling vs streaming decision is recorded with rationale and expected latency targets.",
+          "docs/dashboard/ planned: include a glossary for session statuses and telemetry fields."
+        ],
+        "output": "Session/telemetry field mapping to whatsapp-api + polling/streaming split",
+        "passes": false
+      },
+      {
+        "id": "047.2-design-session-api-and-guardrails",
+        "description": "Design session APIs and destructive-action guardrails",
+        "depends_on": [
+          "047.1-research-whatsapp-api-session-endpoints"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "047.1 field mapping",
+          "summary": "Define dashboard-facing API endpoints and guardrails for restart/logout/delete."
+        },
+        "tasks": [
+          "Define endpoints: GET /api/sessions, GET /api/sessions/:id, GET /api/sessions/:id/qr",
+          "Define mutation endpoints: POST /api/sessions/:id/restart, POST /api/sessions/:id/logout, DELETE /api/sessions/:id",
+          "Define RBAC rules for each action and how audit entries are recorded",
+          "Define guardrails: confirmation token for destructive actions, rate limits, and CSRF protections for session auth"
+        ],
+        "verification": [
+          "API list supports the Sessions tab UI (grid, detail pane, and actions).",
+          "RBAC and audit semantics are explicit for each action and role combination.",
+          "Guardrails are concrete and testable, not just 'be careful' guidance.",
+          "docs/dashboard/ planned: explain safe session actions for non-technical users clearly."
+        ],
+        "output": "Session API contract + RBAC + guardrails design",
+        "passes": false
+      },
+      {
+        "id": "047.3-implement-session-apis",
+        "description": "Implement session APIs with audit + realtime events",
+        "depends_on": [
+          "047.2-design-session-api-and-guardrails"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "047.2 API contract + guardrails",
+          "summary": "Implement session orchestration endpoints, proxy to whatsapp-api safely, and emit structured events."
+        },
+        "tasks": [
+          "Implement GET endpoints for listing and fetching session details with tenant scoping",
+          "Implement QR endpoint (either proxy QR image/data or provide service-side QR rendering strategy)",
+          "Implement restart/logout/delete endpoints with RBAC gates and destructive confirmation",
+          "Emit structured stream events for session actions and write audit_log entries"
+        ],
+        "verification": [
+          "GET /api/sessions returns only sessions allowed for the authenticated tenant.",
+          "Restart/logout/delete actions are RBAC-gated and generate audit_log entries every time.",
+          "Session actions emit realtime events within 1 second under normal load conditions.",
+          "Destructive actions are blocked without confirmation token and valid CSRF context."
+        ],
+        "output": "Session orchestration APIs implemented with audit + realtime visibility",
+        "passes": false
+      },
+      {
+        "id": "047.4-tests-and-docs",
+        "description": "Add tests and docs for session orchestration",
+        "depends_on": [
+          "047.3-implement-session-apis"
+        ],
+        "context": {
+          "docs": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "047.3 implemented session APIs",
+          "summary": "Add test coverage and update docs for operators."
+        },
+        "tasks": [
+          "Add tests: tenant scoping for session list; RBAC gating for actions; audit entries created",
+          "Add docs describing session actions and safety guardrails, including example curl commands using PATs",
+          "Document QR troubleshooting and expected statuses"
+        ],
+        "verification": [
+          "Run `npm test` and confirm session orchestration tests pass reliably in CI.",
+          "docs/dashboard/ planned: document session actions, QR troubleshooting, and safety guardrails.",
+          "docs/guides/user-management/ planned: explain which roles can restart/logout/delete sessions safely when needed.",
+          "Example curl commands use placeholders and never include real secrets or tokens."
+        ],
+        "output": "Session orchestration is tested and documented",
+        "passes": false
+      }
+    ],
+    "changelog": "Added session orchestration APIs with telemetry and audited operator actions",
+    "passes": false
+  },
+  {
+    "id": "049-20260122-security-guardrails-redaction-ssrf",
+    "description": "Implement redaction and SSRF guardrails for dashboard and routing",
+    "type": "security",
+    "priority": 18,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "038-20260121-rbac-audit-redaction",
+      "024-20260120-multi-target-webhook-routing"
+    ],
+    "context": {
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Prevent secret leakage and unsafe outbound routing in a multi-tenant environment."
+    },
+    "subtasks": [
+      {
+        "id": "049.1-research-redaction-and-ssrf-rules",
+        "description": "Enumerate redaction fields and SSRF threat model",
+        "context": {
+          "docs": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "summary": "Define exactly what must be redacted and what outbound targets must be blocked/allowed."
+        },
+        "tasks": [
+          "Enumerate sensitive fields to redact (x-api-key, Authorization, cookies, webhook secrets, tokens) including nested JSON cases",
+          "Define tenant redaction policy options (mask message bodies, store only hashes, retain minimal metadata)",
+          "Define SSRF policy: allowed schemes, allowed domains per tenant, private IP and localhost blocking, redirect handling"
+        ],
+        "verification": [
+          "Redaction key list is explicit and covers headers and nested JSON payloads.",
+          "Tenant redaction policy options are concrete and map directly to PRD requirements.",
+          "SSRF policy includes redirect behavior and private-range blocking rules for safety.",
+          "docs/dashboard/ planned: describe what business users can and cannot see in logs."
+        ],
+        "output": "Redaction keys + tenant policy options + SSRF rules",
+        "passes": false
+      },
+      {
+        "id": "049.2-implement-redaction",
+        "description": "Implement centralized redaction utility and policy enforcement",
+        "depends_on": [
+          "049.1-research-redaction-and-ssrf-rules"
+        ],
+        "context": {
+          "prior_output": "049.1 redaction rules",
+          "summary": "Implement redaction at ingest (before store) and at emit (before websocket/API responses)."
+        },
+        "tasks": [
+          "Implement a single redaction function used by logging, event streaming, and API responses",
+          "Apply tenant policy at ingest: store raw payload only if permitted; otherwise store masked payload + hash",
+          "Ensure audit_log never stores secrets (store summaries/metadata only)"
+        ],
+        "verification": [
+          "Redaction is applied consistently across logs, websocket events, and REST APIs.",
+          "Tenant policy can mask message bodies without breaking correlationId-based search and filters.",
+          "Audit entries contain no secrets but remain useful for forensics and accountability.",
+          "docs/dashboard/ planned: add redaction policy explanation for business stakeholders and operators."
+        ],
+        "output": "Central redaction and tenant policy enforcement implemented",
+        "passes": false
+      },
+      {
+        "id": "049.3-implement-ssrf-allowlists",
+        "description": "Implement SSRF protections for webhook targets",
+        "depends_on": [
+          "049.1-research-redaction-and-ssrf-rules"
+        ],
+        "context": {
+          "prior_output": "049.1 SSRF rules",
+          "summary": "Block unsafe outbound webhook targets and enforce tenant allowlists."
+        },
+        "tasks": [
+          "Validate webhook target URLs on registration and on forward (defense in depth)",
+          "Enforce tenant allowlists for domains and block localhost/private IP ranges by default",
+          "Reject redirects to disallowed hosts and set sane timeouts on outbound calls"
+        ],
+        "verification": [
+          "Registering a disallowed URL fails with 400 and a clear error message.",
+          "Forwarding never occurs to disallowed targets, even if registration data is tampered.",
+          "Redirects to private IPs are rejected and logged as security violations.",
+          "docs/guides/authentication/ planned: document allowed target rules and safe defaults clearly."
+        ],
+        "output": "SSRF protections enforced on routing targets",
+        "passes": false
+      },
+      {
+        "id": "049.4-security-tests-and-docs",
+        "description": "Add security tests and document guardrails",
+        "depends_on": [
+          "049.2-implement-redaction",
+          "049.3-implement-ssrf-allowlists"
+        ],
+        "context": {
+          "prior_output": "049.2+049.3 implemented guardrails",
+          "summary": "Add regression coverage and document tenant security controls."
+        },
+        "tasks": [
+          "Add tests ensuring secrets never appear in emitted events/log payloads",
+          "Add tests ensuring SSRF targets are blocked (localhost/private ranges/redirects)",
+          "Update docs/ with redaction policy and SSRF allowlist configuration per tenant"
+        ],
+        "verification": [
+          "Run `npm test` and confirm security regression tests pass reliably in CI.",
+          "docs/dashboard/ planned: document redaction policies and example masked event views.",
+          "docs/guides/authentication/ planned: document SSRF allowlists, blocked ranges, and error meanings.",
+          "Regression tests prevent reintroducing secret leakage and unsafe forwarding behavior."
+        ],
+        "output": "Security guardrails are tested and documented",
+        "passes": false
+      }
+    ],
+    "changelog": "Added redaction policies and SSRF protections for secure multi-tenant operations",
+    "passes": false
+  },
+  {
+    "id": "050-20260122-serve-dashboard-and-minimal-nav",
+    "description": "Serve dashboard SPA from service under /dashboard",
+    "type": "improvement",
+    "priority": 19,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "042-20260122-dashboard-frontend-package",
+      "043-20260122-keycloak-bff-auth-service"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts"
+      ],
+      "summary": "Deploy model: one service serves the SPA build output. Ensure Keycloak session protects access and SPA client-side routing works. Note: task 042 (dashboard package) is complete and merged."
+    },
+    "subtasks": [
+      {
+        "id": "050.1-design-static-serving-and-csp",
+        "description": "Design static asset serving and security headers",
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "summary": "Define where SPA build artifacts live and which CSP directives are needed for the dashboard and Keycloak redirects."
+        },
+        "tasks": [
+          "Define build artifact path (e.g. packages/whatsapp-dashboard/dist) and how service serves it under /dashboard",
+          "Define SPA routing fallback behavior (serve index.html for /dashboard/*)",
+          "Define required security headers: CSP (script/style/connect/img), frame-ancestors, referrer-policy; ensure websocket and API calls are permitted"
+        ],
+        "verification": [
+          "Artifact path and /dashboard URL mapping are explicit and contain no ambiguity.",
+          "SPA refresh routing behavior is defined for all three routes and deep links.",
+          "CSP/connect-src explicitly includes websocket and API origins required in Docker and local dev.",
+          "docs/deployment/ planned: add reverse-proxy notes and required CSP connect-src values."
+        ],
+        "output": "Static serving + CSP design for /dashboard",
+        "passes": false
+      },
+      {
+        "id": "050.2-implement-static-serving",
+        "description": "Implement serving the SPA build from the service",
+        "depends_on": [
+          "050.1-design-static-serving-and-csp"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "050.1 static serving + CSP design",
+          "summary": "Serve the dashboard SPA and ensure it is protected by Keycloak session."
+        },
+        "tasks": [
+          "Add static middleware for /dashboard assets and index.html fallback for client-side routing",
+          "Ensure /dashboard routes require Keycloak session (or redirect to /auth/login)",
+          "Apply the defined security headers without breaking Keycloak redirects or websocket connections"
+        ],
+        "verification": [
+          "Visiting /dashboard unauthenticated redirects to Keycloak; after login it renders the SPA.",
+          "Hard refresh works for /dashboard/conversations and /dashboard/admin without 404 errors.",
+          "Security headers are present and websocket connections still succeed after login.",
+          "docs/deployment/ planned: document SPA serving, caching headers, and proxy configuration."
+        ],
+        "output": "SPA served from service under /dashboard with auth gating",
+        "passes": false
+      },
+      {
+        "id": "050.3-docs-and-deploy-notes",
+        "description": "Document dashboard serving and deployment",
+        "depends_on": [
+          "050.2-implement-static-serving"
+        ],
+        "context": {
+          "prior_output": "050.2 SPA served from service",
+          "summary": "Add documentation for ops/deploy and local dev setup."
+        },
+        "tasks": [
+          "Document build steps (monorepo build includes dashboard dist) and how to run locally",
+          "Document Keycloak redirect URI requirements for /dashboard and /auth/callback",
+          "Add troubleshooting section: CSP issues, websocket connect issues, reverse proxy notes"
+        ],
+        "verification": [
+          "docs/deployment/ planned: add deployment notes for serving SPA from the service.",
+          "docs/keycloak/ planned: include a checklist for Keycloak redirect URI setup.",
+          "Docs include troubleshooting steps for common CSP, cookie, and websocket failures.",
+          "Docs are readable by non-super-users, using minimal jargon and screenshots."
+        ],
+        "output": "Dashboard serving documented for dev and production",
+        "passes": false
+      }
+    ],
+    "changelog": "Served the dashboard SPA from whatsapp-service under /dashboard with Keycloak protection",
+    "passes": false
+  },
+  {
+    "id": "056-20260203-whatsapp-frontend-package",
+    "description": "Multi-tenant CRM frontend for WhatsApp dashboard",
+    "type": "feature",
+    "priority": null,
+    "status": "active",
+    "milestone": "v0.7.0",
+    "scope": "packages/whatsapp-dashboard",
+    "references": [
+      "042-20260122-dashboard-frontend-package",
+      "035-20260121-postgres-tenancy-foundation"
+    ],
+    "blocked_by": "035-20260121-postgres-tenancy-foundation",
+    "context": {
+      "files": [
+        "packages/whatsapp-dashboard/src/",
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Extend the dashboard SPA with multi-tenant CRM features: tenant switching, contact management, conversation history, and tenant-scoped views."
+    },
+    "tasks": [
+      "Add tenant context provider and tenant switching UI",
+      "Implement contact management views (list, detail, history)",
+      "Add tenant-scoped conversation history and search",
+      "Integrate with Postgres-backed tenant APIs from task 035"
+    ],
+    "verification": [
+      "Tenant switching updates all dashboard views correctly",
+      "Contact list and detail views render tenant-scoped data",
+      "No cross-tenant data leakage in frontend views"
+    ],
+    "changelog": "Added multi-tenant CRM frontend to WhatsApp dashboard",
+    "passes": false
+  }
+]

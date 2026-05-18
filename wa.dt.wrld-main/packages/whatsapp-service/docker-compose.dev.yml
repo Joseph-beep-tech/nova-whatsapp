@@ -1,0 +1,163 @@
+version: '3.8'
+
+# ⚠ Port conflicts: Redis 6379 and Qdrant 6333/6334 overlap with
+# ai-ops-platform/docker-compose.dev.yml and infra/dev/docker-compose.shared.yml.
+# Do NOT run this alongside those stacks — use the root docker-compose.yml
+# (which remaps to 16333/16334, 17017, 13001) for side-by-side operation.
+
+services:
+  # MongoDB - State storage for webhook registrations and config
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    restart: unless-stopped
+    volumes:
+      - mongodb-data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis - Event queue and caching
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant - Vector database for RAG
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # WhatsApp API - Core service managing WhatsApp sessions
+  whatsapp-api:
+    build:
+      context: ../../vendor/whatsapp-api
+      dockerfile: Dockerfile
+    container_name: whatsapp-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - API_KEY=${API_KEY:-dev-local-key}
+      - BASE_WEBHOOK_URL=${BASE_WEBHOOK_URL:-http://whatsapp-service:3001/events}
+      - SESSIONS_PATH=/app/sessions
+      - MAX_ATTACHMENT_SIZE=10485760
+      - SET_MESSAGES_AS_SEEN=false
+      - ENABLE_SWAGGER_ENDPOINT=true
+      - RECOVER_SESSIONS=true
+      - RATE_LIMIT_MAX=1000
+      - RATE_LIMIT_WINDOW_MS=1000
+    volumes:
+      # Shared sessions directory - CRITICAL for data sharing
+      - whatsapp-sessions:/app/sessions:rw
+    ports:
+      - "3000:3000"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/ping', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # WhatsApp n8n Service - Thin wrapper for n8n integration
+  whatsapp-service:
+    build:
+      context: ../packages/whatsapp-service
+      dockerfile: Dockerfile
+    container_name: whatsapp-service
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      whatsapp-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - API_KEY=${API_KEY:-dev-local-key}
+      - WHATSAPP_API_URL=http://whatsapp-api:3000
+      - MONGODB_URI=mongodb://mongodb:27017/whatsapp-service
+      # Event Queue (Redis)
+      - ENABLE_EVENT_QUEUE=${ENABLE_EVENT_QUEUE:-false}
+      - REDIS_URL=redis://redis:6379
+      # Qdrant RAG (optional)
+      - ENABLE_QDRANT=${ENABLE_QDRANT:-false}
+      - QDRANT_URL=http://qdrant:6333
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-minilm-l6-v2}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
+      # ERPNext sync (connects to ai-ops-platform ERPNext stack)
+      - ENABLE_ERPNEXT_SYNC=${ENABLE_ERPNEXT_SYNC:-false}
+      - ERPNEXT_URL=${ERPNEXT_URL:-http://host.docker.internal:8088}
+      - ERPNEXT_API_KEY=${ERPNEXT_API_KEY:-}
+      - ERPNEXT_API_SECRET=${ERPNEXT_API_SECRET:-}
+      - ERPNEXT_WEBHOOK_SECRET=${ERPNEXT_WEBHOOK_SECRET:-dev-webhook-secret}
+    volumes:
+      # Shared sessions directory (read-only, only whatsapp-api writes)
+      - whatsapp-sessions:/app/sessions:ro
+    ports:
+      - "3001:3001"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/service/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  # Shared volume for WhatsApp session data
+  # whatsapp-api has read-write access
+  # whatsapp-service has read-only access (doesn't need to write)
+  whatsapp-sessions:
+    driver: local
+  # MongoDB data volume
+  mongodb-data:
+    driver: local
+  # Redis data volume (for event queue persistence)
+  redis-data:
+    driver: local
+  # Qdrant data volume (for vector storage)
+  qdrant-data:
+    driver: local
+
+networks:
+  whatsapp-network:
+    driver: bridge

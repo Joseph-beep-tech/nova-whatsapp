@@ -1,0 +1,45 @@
+[
+  {
+    "id": "041-20260121-router-feedback-loop-fix",
+    "description": "Fix WhatsApp Router feedback loop and duplicate message protection",
+    "type": "fix",
+    "priority": 0,
+    "status": "completed",
+    "milestone": "v1.1",
+    "scope": "n8n-workflows",
+    "references": ["024-20260120-multi-target-webhook-routing"],
+    "context": {
+      "files": ["n8n-workflows/whatsapp-router.json"],
+      "docs": ["docs/n8n/06-webhook-routing-option-a-n8n-router.md", "docs/incidents/2026-01-21-router-feedback-loop.md"],
+      "summary": "Router workflow triggers on ALL message_create events including bot's own messages, causing infinite feedback loop. User's WhatsApp number received 200+ duplicate messages."
+    },
+    "design": {
+      "problem": "When the bot sends a message, WhatsApp fires message_create with fromMe:true. This triggers the Router workflow again, which triggers 'Send a text message' node again, causing infinite loop.",
+      "root_cause": "Extract Routing Data node passes all events through without filtering fromMe:true messages",
+      "solution": "Two-layer protection: (1) Filter fromMe:true on message_create events, (2) Add deduplication using workflow static data to prevent same message to same chat within cooldown window",
+      "implementation": {
+        "layer1_fromMe_filter": "In Extract Routing Data, return [] when dataType === 'message_create' && fromMe === true",
+        "layer2_deduplication": "Use $getWorkflowStaticData('global') to track messageKey (chatId:content) with timestamp, skip if within 60s cooldown"
+      }
+    },
+    "tasks": [
+      "Update Extract Routing Data Code node to filter fromMe:true on message_create events",
+      "Add deduplication logic using workflow static data (chatId + message content + 60s cooldown)",
+      "Add cleanup logic to remove old entries from static data (prevent memory growth)",
+      "Test: Send message TO bot, verify single response (no loop)",
+      "Test: Bot sends message, verify no loop triggered",
+      "Update local n8n-workflows/whatsapp-router.json with fixed code"
+    ],
+    "verification": [
+      "Send WhatsApp message to bot number",
+      "Receive exactly ONE response (not multiple)",
+      "wwebjs-api logs show no repeated 'Used Fanout Flow' messages",
+      "Workflow execution count matches message count (no infinite executions)",
+      "Router workflow can be safely activated without risk of feedback loop"
+    ],
+    "changelog": "Fixed feedback loop in WhatsApp Router workflow with fromMe filter and message deduplication",
+    "passes": true,
+    "completed_at": "2026-01-21",
+    "incident_report": "docs/incidents/2026-01-21-router-feedback-loop.md"
+  }
+]

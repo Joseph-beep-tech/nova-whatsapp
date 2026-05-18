@@ -1,0 +1,411 @@
+[
+  {
+    "id": "057-20260224-llm-conversational-system",
+    "description": "LLM-powered tag-based conversational system",
+    "type": "feature",
+    "priority": null,
+    "status": "in_progress",
+    "milestone": "v0.8.0",
+    "scope": "packages/whatsapp-service",
+    "references": [],
+    "blocked_by": "Qdrant enabled in production (Phase 8 of az.voice migration)",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/handlers/keywordHandler.ts",
+        "packages/whatsapp-service/src/services/qdrantHandler.ts",
+        "packages/whatsapp-service/src/services/llmService.ts",
+        "packages/whatsapp-service/src/handlers/messageRouter.ts",
+        "packages/whatsapp-service/src/services/welcomeService.ts",
+        "packages/whatsapp-service/src/services/eventRouter.ts",
+        "packages/whatsapp-service/src/types/routing.ts",
+        "packages/whatsapp-service/src/types/llm.ts",
+        "packages/whatsapp-service/src/shared/config.ts"
+      ],
+      "docs": [
+        "docs/architecture/05-memory-schema-enhancements.md",
+        "docs/architecture/06-llm-conversational-system.md",
+        "spec/13-n8n-to-service-migration.md"
+      ],
+      "summary": "LLM conversational system with intent detection, dynamic menus, unregistered user flow. Uses OpenRouter with Grok model. All code implemented, needs production Qdrant for end-to-end testing."
+    },
+    "subtasks": [
+      {
+        "id": "057.1-research-existing-capabilities",
+        "description": "Audit existing handlers and identify gaps",
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/services/qdrantHandler.ts",
+            "packages/whatsapp-service/src/handlers/keywordHandler.ts",
+            "packages/whatsapp-service/src/handlers/messageRouter.ts",
+            "packages/whatsapp-service/src/services/welcomeService.ts",
+            "packages/whatsapp-service/src/services/eventRouter.ts",
+            "packages/whatsapp-service/src/types/routing.ts",
+            "packages/whatsapp-service/src/shared/config.ts"
+          ],
+          "summary": "Map current capabilities to target requirements and identify what needs to be built vs configured"
+        },
+        "tasks": [
+          "Audit qdrantHandler: per-collection support, hybrid search, LLM response generation capabilities",
+          "Audit keywordHandler: runtime registration, current commands (echo, ping, help, status)",
+          "Audit messageRouter: tag detection, dedup, routing to handlers",
+          "Audit welcomeService: per-tag welcome messages, unregistered user handling",
+          "Identify gaps: LLM menu generation, intent detection, admin-only command gating, unregistered user generic greeting"
+        ],
+        "verification": [
+          "Gap analysis documented with specific code locations and required changes"
+        ],
+        "output": "ALREADY EXISTS: qdrantHandler has per-tag collections, hybrid search, OpenRouter LLM client, system prompts per tag. keywordHandler has echo/ping/help/status with adminOnly gating and runtime registration. messageRouter has tag/keyword detection with regex patterns. welcomeService has per-tag multi-message welcome sequences. eventRouter wires all together with auto-tag registration + welcome flow. Config has OPENROUTER_API_KEY, LLM_MODEL, OPENROUTER_BASE_URL env vars. GAPS: (1) No LLM intent detection - only regex matching in messageRouter. (2) No LLM-generated menus - qdrantHandler responses are free-form. (3) Help command is hardcoded keyword list, not dynamic tag-specific LLM guidance. (4) No unregistered user greeting - eventRouter returns no_route for unknown users. (5) No per-user stats/progress in LLM context. (6) Need LLM_MODEL set to Grok model at deploy time.",
+        "passes": true
+      },
+      {
+        "id": "057.2-configure-openrouter-grok",
+        "description": "Configure OpenRouter with Grok model",
+        "depends_on": [
+          "057.1-research-existing-capabilities"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/shared/config.ts",
+            "packages/whatsapp-service/src/services/llmService.ts"
+          ],
+          "prior_output": "057.1 gap analysis"
+        },
+        "tasks": [
+          "Add llmConfig to shared/config.ts with ENABLE_LLM, LLM_MODEL, API key, temperature, max tokens, brand name",
+          "Create llmService.ts with OpenAI client initialized via OpenRouter base URL",
+          "Set LLM_MODEL default to x-ai/grok-2 via env var",
+          "API key stored in WORKING-SESSION file, not in code"
+        ],
+        "verification": [
+          "llmConfig exported from config.ts with all required fields",
+          "llmService initializes OpenAI client with OpenRouter base URL",
+          "No API keys committed to version control",
+          "Type check passes"
+        ],
+        "output": "llmConfig added to config.ts. LlmService created with OpenAI client, initialize(), isEnabled(), complete() methods. Uses same OPENROUTER_API_KEY and OPENROUTER_BASE_URL as qdrantConfig.",
+        "passes": true
+      },
+      {
+        "id": "057.3-implement-intent-detection",
+        "description": "Add LLM-based intent detection for free-text messages",
+        "depends_on": [
+          "057.2-configure-openrouter-grok"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/services/llmService.ts",
+            "packages/whatsapp-service/src/types/llm.ts",
+            "packages/whatsapp-service/src/services/eventRouter.ts"
+          ],
+          "prior_output": "057.2 LlmService with OpenRouter client"
+        },
+        "tasks": [
+          "Create types/llm.ts with UserIntent, IntentDetectionResult, LlmCompletionResult types",
+          "Implement detectIntent() in llmService with classification prompt returning structured JSON",
+          "Add handleUnregisteredUser() to eventRouter that calls detectIntent when user has no tags",
+          "Map tag_interest intent to auto-registration, greeting/unknown to welcome message, question to contextual response",
+          "Add parseIntentResponse() with markdown code fence stripping and graceful JSON parsing"
+        ],
+        "verification": [
+          "17 unit tests pass covering all intent types, malformed JSON, API errors, code fence handling",
+          "Intent detection does not break existing keyword command handling",
+          "Type check passes"
+        ],
+        "output": "detectIntent() classifies into tag_interest/help/greeting/question/unknown. eventRouter.handleUnregisteredUser() wired for users with no tags. Falls back gracefully on API errors.",
+        "passes": true
+      },
+      {
+        "id": "057.4-implement-llm-menus-and-help",
+        "description": "Add LLM-generated menus and dynamic help command",
+        "depends_on": [
+          "057.3-implement-intent-detection"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/handlers/keywordHandler.ts",
+            "packages/whatsapp-service/src/services/llmService.ts"
+          ],
+          "prior_output": "057.3 intent detection in routing pipeline"
+        },
+        "tasks": [
+          "Add generateHelp() to llmService that produces context-aware help based on user tags and commands",
+          "Add generateWelcome() for unregistered user menu listing available programs",
+          "Update keywordHandler help command to delegate to llmService.generateHelp() when LLM enabled",
+          "Add setLlmService() to keywordHandler for dependency injection",
+          "Keep static fallback for when LLM is unavailable"
+        ],
+        "verification": [
+          "Help command returns LLM-generated text when LLM enabled",
+          "Help command returns static text when LLM disabled",
+          "Status command still admin-only (existing adminOnly gating unchanged)",
+          "Type check passes"
+        ],
+        "output": "generateHelp() and generateWelcome() in llmService. keywordHandler delegates help to LLM with static fallback. Admin-only status command unchanged.",
+        "passes": true
+      },
+      {
+        "id": "057.5-implement-unregistered-user-flow",
+        "description": "Add generic greeting for unregistered users",
+        "depends_on": [
+          "057.4-implement-llm-menus-and-help"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/services/eventRouter.ts",
+            "packages/whatsapp-service/src/services/llmService.ts",
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "057.4 LLM menus and help working"
+        },
+        "tasks": [
+          "Add handleUnregisteredUser() to eventRouter: detect intent → register or welcome",
+          "Wire LLM into both processEvent and routeEventSync no-route sections",
+          "Add generateUnregisteredResponse() for contextual replies to unregistered user questions",
+          "Wire llmService into eventRouter and keywordHandler in index.ts",
+          "Ensure tag keyword detection (SOMO etc.) still works for unregistered users"
+        ],
+        "verification": [
+          "Unregistered user with LLM enabled gets welcome with available programs",
+          "Unregistered user asking about a tag gets auto-registered via LLM intent",
+          "Unregistered user can still register via tag keyword (existing regex flow)",
+          "After registration, user gets tag-specific responses",
+          "All 22 test suites pass (2 known MongoDB failures)",
+          "docs/architecture/06-llm-conversational-system.md created"
+        ],
+        "output": "Complete unregistered user flow: intent detection → auto-register or welcome. Wired in both sync and async event processing paths. 17 new LLM tests. Architecture doc created.",
+        "passes": true
+      }
+    ],
+    "changelog": "Added LLM-powered tag-based conversational system with intent detection, dynamic menus, and Grok model via OpenRouter",
+    "passes": false
+  },
+  {
+    "id": "058-20260225-erpnext-sync-adapter",
+    "description": "ERPNext sync adapter for shared operational schema",
+    "type": "feature",
+    "priority": 1,
+    "status": "active",
+    "milestone": "v0.9.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "057-20260224-llm-conversational-system"
+    ],
+    "blocked_by": "ERPNext instance at erp.dater.world (Phase E0 in docs/erpnext/ERP_SETUP_WA.md)",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/types/erpnext.ts",
+        "packages/whatsapp-service/src/services/erpnextSync.ts",
+        "packages/whatsapp-service/src/routes/erpnextWebhooks.ts",
+        "packages/whatsapp-service/src/shared/config.ts",
+        "packages/whatsapp-service/src/services/eventRouter.ts",
+        "packages/whatsapp-service/src/utils/stateManager.ts"
+      ],
+      "docs": [
+        "spec/16-erpnext-integration.md",
+        "docs/erpnext/ERP_SETUP_WA.md"
+      ],
+      "summary": "ERPNext replaces planned Postgres tenancy as shared operational layer. wa.dt.wrld syncs users/campaigns/communications to ERPNext via REST API and receives real-time updates via webhooks. MongoDB remains the fast-path store; ERPNext is async write-through with periodic reconciliation."
+    },
+    "subtasks": [
+      {
+        "id": "058.1-erpnext-types-and-config",
+        "description": "ERPNext TypeScript types and configuration",
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/shared/config.ts",
+            "packages/whatsapp-service/src/types/api.ts",
+            "spec/16-erpnext-integration.md"
+          ],
+          "summary": "Define ERPNext document interfaces and config. Spec has full field tables for Contact, Campaign, Communication DocTypes with custom fields."
+        },
+        "tasks": [
+          "Create src/types/erpnext.ts with ERPNextContact, ERPNextCampaign, ERPNextCommunication interfaces matching spec DocType field tables",
+          "Add ERPNextWebhookPayload type (event, doctype, name, data)",
+          "Add ERPNextSyncService interface as defined in spec",
+          "Add CommunicationLog type for batched message logging",
+          "Add erpnextConfig to shared/config.ts (ENABLE_ERPNEXT_SYNC, ERPNEXT_URL, API key/secret, webhook secret, sync intervals, company filter)",
+          "Add ERPNext lifecycle stage enum matching spec (Pending, Enrolled, Active, Completed, Alumni, Churned)"
+        ],
+        "verification": [
+          "npm run type-check passes",
+          "Types match spec/16 field tables exactly",
+          "Config defaults match spec (5min sync, 10s batch, disabled by default)"
+        ],
+        "output": "ERPNext types in src/types/erpnext.ts, erpnextConfig in shared/config.ts",
+        "passes": false
+      },
+      {
+        "id": "058.2-erpnext-http-client",
+        "description": "ERPNext REST API HTTP client",
+        "depends_on": [
+          "058.1-erpnext-types-and-config"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/types/erpnext.ts",
+            "packages/whatsapp-service/src/shared/config.ts",
+            "spec/16-erpnext-integration.md"
+          ],
+          "prior_output": "058.1 types and config",
+          "summary": "Build HTTP client for Frappe REST API. Auth: token api_key:api_secret. CRUD at /api/resource/:doctype/:name. Filter syntax: [[field,op,value]]."
+        },
+        "tasks": [
+          "Create src/services/erpnextClient.ts with typed HTTP methods for Frappe REST API",
+          "Implement createContact(), updateContact(), getContactByPhone() methods",
+          "Implement getActiveCampaigns() for bulk campaign loading with custom field selection",
+          "Implement createCommunication() for message logging",
+          "Add retry with exponential backoff for transient failures",
+          "Add request timeout (10s default) to prevent blocking",
+          "Log all ERPNext API calls at debug level, errors at error level"
+        ],
+        "verification": [
+          "npm run type-check passes",
+          "Unit tests with mocked fetch for each API method",
+          "Retry logic tested (3 attempts with backoff)",
+          "Auth header format correct: 'token key:secret'"
+        ],
+        "output": "ERPNextClient class with typed CRUD methods, retry logic, and error handling",
+        "passes": false
+      },
+      {
+        "id": "058.3-sync-service",
+        "description": "ERPNext sync service implementation",
+        "depends_on": [
+          "058.2-erpnext-http-client"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/services/erpnextClient.ts",
+            "packages/whatsapp-service/src/types/erpnext.ts",
+            "packages/whatsapp-service/src/utils/stateManager.ts"
+          ],
+          "prior_output": "058.2 ERPNextClient with typed CRUD methods",
+          "summary": "Implement ERPNextSyncService interface. Write-through on user registration, batched communication logging, periodic cache refresh from ERPNext. Uses stateManager for MongoDB operations."
+        },
+        "tasks": [
+          "Create src/services/erpnextSync.ts implementing ERPNextSyncService interface",
+          "Implement initialize(): load all active Campaigns → tagConfigs, optionally Contacts → users",
+          "Implement syncUserRegistration(): write to MongoDB then queue ERPNext Contact create/update",
+          "Implement syncUserProgress() and syncLifecycleStage(): update ERPNext Contact custom fields",
+          "Implement logCommunication(): buffer messages, flush every ERPNEXT_BATCH_LOG_INTERVAL_MS",
+          "Implement refreshContactCache() and refreshCampaignCache(): periodic full refresh from ERPNext",
+          "Add graceful degradation: if ERPNext unreachable, log warning and continue with cached data",
+          "Add queue for failed syncs with retry backoff"
+        ],
+        "verification": [
+          "npm run type-check passes",
+          "Unit tests with mocked ERPNextClient for each sync method",
+          "Batching logic tested (accumulates then flushes)",
+          "Graceful degradation tested (ERPNext down → continues with cache)",
+          "Never blocks message routing (all ERPNext calls are fire-and-forget or background)"
+        ],
+        "output": "ERPNextSyncService with async write-through, batched logging, and periodic refresh",
+        "passes": false
+      },
+      {
+        "id": "058.4-webhook-receivers",
+        "description": "ERPNext webhook receiver routes",
+        "depends_on": [
+          "058.3-sync-service"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/services/erpnextSync.ts",
+            "packages/whatsapp-service/src/types/erpnext.ts",
+            "packages/whatsapp-service/src/routes/events.ts"
+          ],
+          "prior_output": "058.3 ERPNextSyncService implementation",
+          "summary": "Express routes for ERPNext webhook events. Endpoints at /service/webhooks/erpnext/contact and /campaign. Validate X-Frappe-Webhook-Secret header. Delegate to sync service handlers."
+        },
+        "tasks": [
+          "Create src/routes/erpnextWebhooks.ts with Express router",
+          "Add POST /service/webhooks/erpnext/contact endpoint",
+          "Add POST /service/webhooks/erpnext/campaign endpoint",
+          "Add webhook secret validation middleware (X-Frappe-Webhook-Secret header)",
+          "Parse webhook payload (event, doctype, name, data) and delegate to sync service",
+          "Return 200 immediately, process async (webhook sender expects fast response)",
+          "Add request logging for webhook events"
+        ],
+        "verification": [
+          "npm run type-check passes",
+          "Unit tests with supertest for each webhook endpoint",
+          "Invalid secret returns 401",
+          "Valid webhook calls sync service handler methods",
+          "Returns 200 within 100ms (no blocking work in handler)"
+        ],
+        "output": "Webhook receiver routes at /service/webhooks/erpnext/* with secret validation",
+        "passes": false
+      },
+      {
+        "id": "058.5-wire-up-and-tests",
+        "description": "Wire sync into eventRouter and add integration tests",
+        "depends_on": [
+          "058.4-webhook-receivers"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/services/eventRouter.ts",
+            "packages/whatsapp-service/src/index.ts",
+            "packages/whatsapp-service/src/services/erpnextSync.ts",
+            "packages/whatsapp-service/src/routes/erpnextWebhooks.ts"
+          ],
+          "prior_output": "058.4 webhook receivers ready",
+          "summary": "Wire ERPNext sync into the main application. eventRouter fires sync events on user registration, tag assignment, message processing. index.ts initializes sync service on startup. Mount webhook routes."
+        },
+        "tasks": [
+          "Add setErpnextSync() to eventRouter for dependency injection",
+          "Fire syncUserRegistration() from eventRouter on new user registration (async, non-blocking)",
+          "Fire logCommunication() from eventRouter after message processing (async, batched)",
+          "Initialize ERPNextSyncService in index.ts when ENABLE_ERPNEXT_SYNC=true",
+          "Mount webhook routes in index.ts app setup",
+          "Start periodic cache refresh timer on initialization",
+          "Add integration tests: full flow from webhook → cache update → eventRouter reads updated data",
+          "Update docs/ROADMAP.md to mark ERPNext sync as in_progress"
+        ],
+        "verification": [
+          "npm run type-check passes",
+          "All existing tests still pass (sync disabled by default)",
+          "Integration test: mock ERPNext webhook → MongoDB cache updated",
+          "Integration test: user registration → sync queued to ERPNext",
+          "ENABLE_ERPNEXT_SYNC=false → no ERPNext code runs (zero overhead)",
+          "docs/ updated with ERPNext sync architecture notes"
+        ],
+        "output": "ERPNext sync fully wired into event pipeline, feature-flagged, with integration tests",
+        "passes": false
+      },
+      {
+        "id": "058.6-migration-scripts",
+        "description": "One-time migration scripts for MongoDB → ERPNext seed",
+        "depends_on": [
+          "058.5-wire-up-and-tests"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/utils/stateManager.ts",
+            "packages/whatsapp-service/src/types/erpnext.ts",
+            "packages/whatsapp-service/scripts/migrate-chatid-to-identifier.ts"
+          ],
+          "prior_output": "058.5 sync adapter fully wired",
+          "summary": "Export existing MongoDB users and tagConfigs to ERPNext format for initial seed. Similar pattern to existing migrate-chatid-to-identifier.ts script."
+        },
+        "tasks": [
+          "Create scripts/export-users-for-erpnext.ts: read MongoDB users → output ERPNext Contact JSON",
+          "Create scripts/export-tagconfigs-for-erpnext.ts: read MongoDB tagConfigs → output ERPNext Campaign JSON",
+          "Map identifier/platform to Contact phone/custom_wa_platform fields",
+          "Map tag configs (targets, system prompt, welcome messages, regex) to Campaign custom fields",
+          "Add dry-run mode (output JSON without writing) and write mode (POST to ERPNext API)",
+          "Handle duplicates gracefully (skip if Contact already exists by phone)"
+        ],
+        "verification": [
+          "Export scripts produce valid ERPNext-compatible JSON",
+          "Dry-run outputs expected Contact/Campaign records for known test data",
+          "Write mode successfully creates records via ERPNext API (manual test with live instance)"
+        ],
+        "output": "Migration scripts ready for one-time MongoDB → ERPNext seed",
+        "passes": false
+      }
+    ],
+    "changelog": "Added ERPNext sync adapter with async write-through, webhook receivers, and migration scripts",
+    "passes": false
+  }
+]

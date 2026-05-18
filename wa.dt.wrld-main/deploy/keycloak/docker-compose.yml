@@ -1,0 +1,72 @@
+# Keycloak Identity Provider
+# Part of WhatsApp Service authentication infrastructure
+#
+# Usage:
+#   docker compose up -d
+#
+# Admin console: http://localhost:8080
+# Realm config: Import realm-export.json after first startup
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: wa-keycloak
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:?KC_DB_PASSWORD is required}
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
+      KC_HOSTNAME: ${KC_HOSTNAME:-localhost}
+      KC_HOSTNAME_PORT: ${KC_HOSTNAME_PORT:-8080}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      # Enable organizations feature (Keycloak 24+)
+      KC_FEATURES: organization
+      # nginx-proxy configuration (set in .env per server)
+      VIRTUAL_HOST: ${VIRTUAL_HOST:-wa-iam.aziziafrica.com}
+      VIRTUAL_PORT: ${VIRTUAL_PORT:-8080}
+      LETSENCRYPT_HOST: ${LETSENCRYPT_HOST:-wa-iam.aziziafrica.com}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-tech@aziziafrica.com}
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    networks:
+      - proxy
+      - wa-network
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  keycloak-postgres:
+    image: postgres:16-alpine
+    container_name: wa-keycloak-postgres
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD:?KC_DB_PASSWORD is required}
+    volumes:
+      - keycloak-postgres-data:/var/lib/postgresql/data
+    networks:
+      - wa-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  keycloak-postgres-data:
+
+networks:
+  wa-network:
+    external: true
+  proxy:
+    external: true

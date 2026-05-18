@@ -1,0 +1,115 @@
+@import './styles/design-tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom base styles */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 13px;
+  }
+
+  * {
+    @apply border-transparent;
+  }
+
+  body {
+    @apply text-foreground;
+    background: linear-gradient(160deg, hsl(var(--teal-2)) 0%, hsl(var(--background)) 35%, hsl(var(--background)) 100%);
+    min-height: 100vh;
+  }
+
+  .dark body {
+    background: linear-gradient(160deg, hsl(var(--teal-1)) 0%, hsl(var(--background)) 25%, hsl(var(--background)) 100%);
+  }
+
+  h1, h2, h3 {
+    @apply font-semibold;
+  }
+
+  /* Custom scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+}
+
+/* Custom component utilities */
+@layer components {
+  /* Chat bubble styles — no borders */
+  .bubble-incoming {
+    @apply bg-card dark:bg-card rounded-2xl rounded-tl-sm shadow-sm;
+  }
+
+  .bubble-outgoing {
+    @apply bg-primary text-primary-foreground rounded-2xl rounded-tr-sm;
+  }
+
+  .bubble-note {
+    @apply bg-amber-50 dark:bg-amber-950/30 rounded-2xl text-amber-900 dark:text-amber-200;
+  }
+
+  /* Status indicators */
+  .status-online {
+    @apply w-2.5 h-2.5 bg-green-500 rounded-full;
+  }
+
+  .status-offline {
+    @apply w-2.5 h-2.5 bg-muted-foreground rounded-full;
+  }
+
+  .status-away {
+    @apply w-2.5 h-2.5 bg-yellow-500 rounded-full;
+  }
+
+  /* Chat area patterned background */
+  .chat-pattern {
+    background-color: hsl(var(--slate-2));
+    background-image:
+      radial-gradient(hsl(var(--slate-4)) 0.5px, transparent 0.5px),
+      radial-gradient(hsl(var(--slate-4)) 0.5px, transparent 0.5px);
+    background-size: 20px 20px;
+    background-position: 0 0, 10px 10px;
+  }
+
+  .dark .chat-pattern {
+    background-color: hsl(var(--slate-1));
+    background-image:
+      radial-gradient(hsl(var(--slate-3)) 0.5px, transparent 0.5px),
+      radial-gradient(hsl(var(--slate-3)) 0.5px, transparent 0.5px);
+  }
+}
+
+/* Custom utilities */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}

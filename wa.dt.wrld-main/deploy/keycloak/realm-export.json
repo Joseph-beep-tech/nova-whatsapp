@@ -1,0 +1,125 @@
+{
+  "realm": "dater",
+  "enabled": true,
+  "displayName": "Azizi Africa",
+  "displayNameHtml": "<strong>Azizi Africa</strong>",
+  "loginTheme": "azizi",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanLogin": 1800,
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": true,
+  "rememberMe": true,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "roles": {
+    "realm": [
+      {
+        "name": "creator_admin",
+        "description": "Platform owner with global access to all tenants and features",
+        "composite": false
+      },
+      {
+        "name": "tenant_admin",
+        "description": "Tenant owner with full access to their organization's resources",
+        "composite": false
+      },
+      {
+        "name": "agent",
+        "description": "Support agent with access to conversations and HITL features",
+        "composite": false
+      },
+      {
+        "name": "automation_engineer",
+        "description": "Workflow builder with access to routing and automation configuration",
+        "composite": false
+      },
+      {
+        "name": "read_only",
+        "description": "Observer with read-only access to dashboards and logs",
+        "composite": false
+      }
+    ]
+  },
+  "defaultRoles": ["read_only"],
+  "clients": [
+    {
+      "clientId": "whatsapp-service",
+      "name": "WhatsApp Service",
+      "description": "Backend service for WhatsApp dashboard authentication",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "REPLACE_WITH_SECURE_SECRET",
+      "redirectUris": [
+        "https://wa-app.aziziafrica.com/auth/callback",
+        "https://wa-app.aziziafrica.com/auth/logout/callback",
+        "http://localhost:3001/auth/callback",
+        "http://localhost:3001/auth/logout/callback"
+      ],
+      "webOrigins": [
+        "https://wa-app.aziziafrica.com",
+        "http://localhost:3001"
+      ],
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "openid",
+        "profile",
+        "email",
+        "roles"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "smtpServer": {},
+  "eventsEnabled": true,
+  "eventsListeners": ["jboss-logging"],
+  "enabledEventTypes": [
+    "LOGIN",
+    "LOGIN_ERROR",
+    "LOGOUT",
+    "LOGOUT_ERROR",
+    "CODE_TO_TOKEN",
+    "CODE_TO_TOKEN_ERROR",
+    "REFRESH_TOKEN",
+    "REFRESH_TOKEN_ERROR"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true
+}

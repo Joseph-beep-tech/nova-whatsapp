@@ -1,0 +1,210 @@
+/*
+ * Azizi Design Tokens
+ * Based on Radix UI color scales: Teal (accent) + Slate (gray)
+ * Mapped to shadcn/ui semantic convention
+ *
+ * 12-step scale semantics:
+ *   1-2:  Backgrounds
+ *   3-5:  Interactive component backgrounds
+ *   6-8:  Borders and separators
+ *   9-10: Solid colors
+ *   11-12: Accessible text
+ *
+ * Usage: These variables are consumed by Tailwind via hsl(var(--foo))
+ * in tailwind.config.ts. All values are space-separated HSL components.
+ */
+
+/* ================================================================
+   RAW RADIX SCALES — use directly when you need a specific step
+   ================================================================ */
+
+:root {
+  /* --- Teal (accent) — light --- */
+  --teal-1: 165.0 66.7% 98.8%;    /* #fafefd */
+  --teal-2: 169.1 64.7% 96.7%;    /* #f1fcfa */
+  --teal-3: 167.5 63.2% 92.5%;    /* #e0f8f3 */
+  --teal-4: 166.2 61.9% 87.6%;    /* #ccf3ea */
+  --teal-5: 164.4 61.4% 82.7%;    /* #b8eee0 */
+  --teal-6: 165.0 58.1% 75.7%;    /* #9de5d3 */
+  --teal-7: 165.7 54.8% 67.1%;    /* #7dd9c3 */
+  --teal-8: 163.8 50.2% 55.1%;    /* #53c6a7 */
+  --teal-9: 174.0 85.9% 25.1%;    /* #09776C */
+  --teal-10: 174.1 87.9% 22.7%;   /* #076d63 */
+  --teal-11: 172.1 75.0% 22.0%;   /* #0e6257 */
+  --teal-12: 171.2 64.9% 14.5%;   /* #0d3d36 */
+
+  /* --- Slate (gray) — light --- */
+  --slate-1: 240.0 20.0% 99.0%;   /* #fcfcfd */
+  --slate-2: 240.0 20.0% 98.0%;   /* #f9f9fb */
+  --slate-3: 240.0 11.1% 94.7%;   /* #f0f0f3 */
+  --slate-4: 240.0 9.5% 91.8%;    /* #e8e8ec */
+  --slate-5: 230.0 10.7% 89.0%;   /* #e0e1e6 */
+  --slate-6: 240.0 10.1% 86.5%;   /* #d9d9e0 */
+  --slate-7: 233.3 9.9% 82.2%;    /* #cdced6 */
+  --slate-8: 230.8 10.2% 75.1%;   /* #b9bbc6 */
+  --slate-9: 230.8 5.9% 57.1%;    /* #8b8d98 */
+  --slate-10: 226.2 5.4% 52.7%;   /* #80838d */
+  --slate-11: 220.0 5.9% 40.0%;   /* #60646c */
+  --slate-12: 210.0 12.5% 12.5%;  /* #1c2024 */
+
+  /* --- Red (destructive) — light --- */
+  --red-9: 358.0 75.0% 59.0%;     /* #e5484d */
+  --red-10: 358.0 69.0% 55.0%;    /* #dc3d43 */
+  --red-11: 358.0 65.0% 49.0%;    /* #cd2b31 */
+}
+
+.dark {
+  /* --- Teal (accent) — dark --- */
+  --teal-1: 157.5 23.5% 6.7%;     /* #0d1512 */
+  --teal-2: 158.2 24.4% 8.8%;     /* #111c18 */
+  --teal-3: 159.4 55.2% 11.4%;    /* #0d2d22 */
+  --teal-4: 165.2 100.0% 12.0%;   /* #003d2e */
+  --teal-5: 167.7 100.0% 14.3%;   /* #00493a */
+  --teal-6: 166.0 100.0% 17.6%;   /* #005a45 */
+  --teal-7: 166.7 100.0% 22.2%;   /* #007158 */
+  --teal-8: 165.1 100.0% 28.4%;   /* #00916d */
+  --teal-9: 174.4 84.2% 32.4%;    /* #0D988B */
+  --teal-10: 171.3 80.6% 38.4%;   /* #13b19a */
+  --teal-11: 170.0 90.3% 44.5%;   /* #0bd8b6 */
+  --teal-12: 163.0 69.1% 81.0%;   /* #adf0dd */
+
+  /* --- Slate (gray) — dark --- */
+  --slate-1: 240.0 5.6% 7.1%;     /* #111113 */
+  --slate-2: 220.0 5.9% 10.0%;    /* #18191b */
+  --slate-3: 225.0 5.7% 13.7%;    /* #212225 */
+  --slate-4: 210.0 7.1% 16.5%;    /* #272a2d */
+  --slate-5: 214.3 7.1% 19.4%;    /* #2e3135 */
+  --slate-6: 213.3 7.7% 22.9%;    /* #363a3f */
+  --slate-7: 212.7 7.6% 28.4%;    /* #43484e */
+  --slate-8: 212.0 7.7% 38.2%;    /* #5a6169 */
+  --slate-9: 218.6 6.3% 43.9%;    /* #696e77 */
+  --slate-10: 212.7 4.3% 50.4%;   /* #7b8086 */
+  --slate-11: 216.0 6.8% 71.0%;   /* #b0b4ba */
+  --slate-12: 220.0 9.1% 93.5%;   /* #edeef0 */
+
+  /* --- Red (destructive) — dark --- */
+  --red-9: 358.0 75.0% 59.0%;     /* #e5484d */
+  --red-10: 358.0 69.0% 55.0%;    /* #dc3d43 */
+  --red-11: 10.0 74.0% 72.0%;     /* #f16a50 */
+}
+
+
+/* ================================================================
+   SEMANTIC TOKENS — shadcn/ui convention
+   Maps Radix scale steps to semantic roles
+   ================================================================ */
+
+:root {
+  /* Page */
+  --background: var(--slate-1);
+  --foreground: var(--slate-12);
+
+  /* Cards / elevated surfaces */
+  --card: 0 0% 100%;              /* pure white */
+  --card-foreground: var(--slate-12);
+
+  /* Popovers / dropdowns */
+  --popover: 0 0% 100%;           /* pure white */
+  --popover-foreground: var(--slate-12);
+
+  /* Primary actions (teal solid) */
+  --primary: var(--teal-9);
+  --primary-foreground: 0 0% 100%;
+
+  /* Secondary / subtle actions */
+  --secondary: var(--slate-3);
+  --secondary-foreground: var(--slate-12);
+
+  /* Muted / disabled */
+  --muted: var(--slate-3);
+  --muted-foreground: var(--slate-11);
+
+  /* Accent highlights */
+  --accent: var(--teal-3);
+  --accent-foreground: var(--teal-11);
+
+  /* Destructive actions */
+  --destructive: var(--red-9);
+  --destructive-foreground: 0 0% 100%;
+
+  /* Borders & inputs */
+  --border: var(--slate-6);
+  --input: var(--slate-6);
+  --ring: var(--teal-8);
+
+  /* Border radius */
+  --radius: 0.75rem;
+
+  /* Sidebar */
+  --sidebar: var(--slate-2);
+  --sidebar-foreground: var(--slate-12);
+  --sidebar-primary: var(--teal-9);
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: var(--teal-3);
+  --sidebar-accent-foreground: var(--teal-11);
+  --sidebar-border: var(--slate-6);
+  --sidebar-ring: var(--teal-8);
+
+  /* Chart palette */
+  --chart-1: var(--teal-9);
+  --chart-2: var(--teal-7);
+  --chart-3: var(--slate-9);
+  --chart-4: var(--teal-5);
+  --chart-5: var(--slate-7);
+}
+
+.dark {
+  /* Page */
+  --background: var(--slate-1);
+  --foreground: var(--slate-12);
+
+  /* Cards / elevated surfaces */
+  --card: var(--slate-2);
+  --card-foreground: var(--slate-12);
+
+  /* Popovers / dropdowns */
+  --popover: var(--slate-3);
+  --popover-foreground: var(--slate-12);
+
+  /* Primary actions (teal solid) */
+  --primary: var(--teal-9);
+  --primary-foreground: 0 0% 100%;
+
+  /* Secondary / subtle actions */
+  --secondary: var(--slate-3);
+  --secondary-foreground: var(--slate-12);
+
+  /* Muted / disabled */
+  --muted: var(--slate-3);
+  --muted-foreground: var(--slate-11);
+
+  /* Accent highlights */
+  --accent: var(--teal-4);
+  --accent-foreground: var(--teal-11);
+
+  /* Destructive actions */
+  --destructive: var(--red-9);
+  --destructive-foreground: var(--slate-12);
+
+  /* Borders & inputs */
+  --border: var(--slate-6);
+  --input: var(--slate-6);
+  --ring: var(--teal-8);
+
+  /* Sidebar */
+  --sidebar: var(--slate-2);
+  --sidebar-foreground: var(--slate-12);
+  --sidebar-primary: var(--teal-9);
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: var(--teal-4);
+  --sidebar-accent-foreground: var(--teal-11);
+  --sidebar-border: var(--slate-6);
+  --sidebar-ring: var(--teal-8);
+
+  /* Chart palette */
+  --chart-1: var(--teal-9);
+  --chart-2: var(--teal-11);
+  --chart-3: var(--slate-9);
+  --chart-4: var(--teal-7);
+  --chart-5: var(--slate-11);
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "022-20260117-fix-sendmessage-markedunread",
+    "description": "Fix wwebjs-api sendMessage markedUnread error",
+    "type": "fix",
+    "priority": 1,
+    "status": "completed",
+    "milestone": "v0.1.1",
+    "scope": "packages/whatsapp-api",
+    "blocked_by": "Upstream whatsapp-web.js bug (GitHub #5718)",
+    "context": {
+      "files": [
+        "packages/whatsapp-api/src/controllers/clientController.js",
+        "packages/whatsapp-api/src/controllers/channelController.js",
+        "packages/whatsapp-api/src/controllers/messageController.js"
+      ],
+      "docs": ["https://github.com/pedroslopez/whatsapp-web.js/issues/5718"],
+      "summary": "WhatsApp changed their web interface, breaking sendSeen function. Fix is to pass sendSeen:false to sendMessage calls."
+    },
+    "tasks": [
+      "Update .gitmodules to point to kulemantu/wwebjs-api fork",
+      "Find all sendMessage calls in controller files",
+      "Add { sendSeen: false } option to all client.sendMessage() calls",
+      "Test sendMessage endpoint returns success",
+      "Deploy updated wwebjs-api to server",
+      "Verify echo workflow processes messages correctly"
+    ],
+    "verification": [
+      "curl POST /client/sendMessage/mysession returns success:true",
+      "Echo workflow receives and processes messages",
+      "No markedUnread error in wwebjs-api logs"
+    ],
+    "changelog": "Fixed sendMessage API by disabling sendSeen (workaround for whatsapp-web.js #5718)",
+    "passes": true,
+    "completed_at": "2026-01-17",
+    "commit": "1ca37c7"
+  }
+]

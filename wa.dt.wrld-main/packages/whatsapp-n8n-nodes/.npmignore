@@ -1,0 +1,14 @@
+# Task management (not for npm distribution)
+tasks.json
+archive/
+
+# Documentation (dist only)
+*.md
+!README.md
+
+# Development files
+*.test.ts
+*.spec.ts
+tsconfig.json
+jest.config.js
+.eslintrc.js

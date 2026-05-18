@@ -1,0 +1,257 @@
+{
+  "name": "WhatsApp Router (Multi-Target Fanout)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp/router",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "router-webhook",
+      "name": "Router Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [256, 304],
+      "webhookId": "whatsapp-router",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Router Workflow: Central routing logic\n// Determines which downstream workflows should receive this message\n// Downstream workflows trust Router's decision and just execute\n\nconst input = $input.first();\nconst webhookData = input.json;\nconst body = webhookData.body || webhookData;\n\n// Extract message data\nconst data = body.data || {};\nconst message = data.message || {};\nconst fromMe = message.fromMe || false;\nconst dataType = body.dataType || 'unknown';\nconst messageContent = message.body || '';\n\n// LAYER 1: Filter out messages from the bot itself (prevents feedback loops)\nif (dataType === 'message_create' && fromMe) {\n  return []; // Stop - this is our own outgoing message\n}\n\n// LAYER 2: Deduplication (prevents duplicate processing within 60s)\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.recentMessages) {\n  staticData.recentMessages = {};\n}\n\nconst chatId = message.to || message.from || 'unknown';\nconst messageKey = chatId + ':' + messageContent.slice(0, 50);\nconst now = Date.now();\nconst cooldownMs = 60000;\n\nif (staticData.recentMessages[messageKey]) {\n  if (now - staticData.recentMessages[messageKey] < cooldownMs) {\n    return []; // Skip - duplicate within cooldown\n  }\n}\nstaticData.recentMessages[messageKey] = now;\n\n// Clean old entries\nfor (const key in staticData.recentMessages) {\n  if (now - staticData.recentMessages[key] > cooldownMs * 2) {\n    delete staticData.recentMessages[key];\n  }\n}\n\n// ROUTING DECISIONS (made once here, not in downstream workflows)\nconst isIncomingMessage = dataType === 'message_create' && !fromMe;\nconst containsSOMO = messageContent.toUpperCase().includes('SOMO');\n\nreturn [{\n  json: {\n    // Pre-extracted data for downstream workflows\n    sessionId: body.sessionId || 'default',\n    from: message.from || null,\n    messageBody: messageContent,\n    pushname: message._data?.notifyName || message.notifyName || null,\n    \n    // Routing flags (decisions made here)\n    routing: {\n      isIncomingMessage,\n      containsSOMO,\n      isGroup: (message.from || '').endsWith('@g.us'),\n      dataType,\n      timestamp: new Date().toISOString()\n    },\n    \n    // Original payload (for workflows that need full context)\n    originalPayload: body\n  }\n}];"
+      },
+      "id": "extract-routing",
+      "name": "Extract & Route",
+      "type": "n8n-nodes-base.code",
+      "position": [480, 304],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "incoming-check",
+              "leftValue": "={{ $json.routing.isIncomingMessage }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "is-incoming",
+      "name": "Is Incoming Message?",
+      "type": "n8n-nodes-base.if",
+      "position": [700, 200],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "somo-check",
+              "leftValue": "={{ $json.routing.containsSOMO }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "contains-somo",
+      "name": "Contains SOMO?",
+      "type": "n8n-nodes-base.if",
+      "position": [700, 450],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://wwebjs-api:3000/client/sendMessage/{{ $json.sessionId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.WHATSAPP_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.from, contentType: 'string', content: 'Echo: ' + $json.messageBody }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "echo-reply",
+      "name": "Send Echo Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [950, 150],
+      "typeVersion": 4.2,
+      "continueOnFail": true,
+      "notes": "Direct echo reply - Router already filtered for incoming messages"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://whatsapp-service:3001/service/users/register",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.SERVICE_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.from, pushname: $json.pushname, tags: ['SOMO', 'incoming'], sessionId: $json.sessionId }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "register-somo-user",
+      "name": "Register SOMO User",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [950, 400],
+      "typeVersion": 4.2,
+      "continueOnFail": true,
+      "notes": "Fire-and-forget: Router already filtered for SOMO messages"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n:5678/webhook/{{BOT_TRIGGER_WEBHOOK_ID}}/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Forwarded-By",
+              "value": "whatsapp-router"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.originalPayload) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "forward-trigger",
+      "name": "Forward to Bot Trigger",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [950, 550],
+      "typeVersion": 4.2,
+      "continueOnFail": true,
+      "notes": "Forward to custom bot workflow for further processing"
+    },
+    {
+      "parameters": {},
+      "id": "no-action",
+      "name": "No Action (Not Incoming)",
+      "type": "n8n-nodes-base.noOp",
+      "position": [950, 250],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {},
+      "id": "no-somo",
+      "name": "No SOMO Tag",
+      "type": "n8n-nodes-base.noOp",
+      "position": [950, 500],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate results from all branches\nconst items = $input.all();\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Router processed message',\n    branches: items.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "position": [1200, 304],
+      "typeVersion": 2
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Router Webhook": {
+      "main": [[{"node": "Extract & Route", "type": "main", "index": 0}]]
+    },
+    "Extract & Route": {
+      "main": [[
+        {"node": "Is Incoming Message?", "type": "main", "index": 0},
+        {"node": "Contains SOMO?", "type": "main", "index": 0}
+      ]]
+    },
+    "Is Incoming Message?": {
+      "main": [
+        [{"node": "Send Echo Reply", "type": "main", "index": 0}],
+        [{"node": "No Action (Not Incoming)", "type": "main", "index": 0}]
+      ]
+    },
+    "Contains SOMO?": {
+      "main": [
+        [
+          {"node": "Register SOMO User", "type": "main", "index": 0},
+          {"node": "Forward to Bot Trigger", "type": "main", "index": 0}
+        ],
+        [{"node": "No SOMO Tag", "type": "main", "index": 0}]
+      ]
+    },
+    "Send Echo Reply": {
+      "main": [[{"node": "Aggregate Results", "type": "main", "index": 0}]]
+    },
+    "No Action (Not Incoming)": {
+      "main": [[{"node": "Aggregate Results", "type": "main", "index": 0}]]
+    },
+    "Register SOMO User": {
+      "main": [[{"node": "Aggregate Results", "type": "main", "index": 0}]]
+    },
+    "Forward to Bot Trigger": {
+      "main": [[{"node": "Aggregate Results", "type": "main", "index": 0}]]
+    },
+    "No SOMO Tag": {
+      "main": [[{"node": "Aggregate Results", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "L94Ziar3GQZLUU1V"
+}

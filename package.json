@@ -1,0 +1,32 @@
+{
+  "name": "azizi-voice-ai-portal",
+  "version": "1.0.0",
+  "description": "Complete AI Voice Portal for managing voice calls, WhatsApp automation, and AI configuration",
+  "private": true,
+  "scripts": {
+    "backend:install": "cd backend && npm install",
+    "backend:dev": "cd backend && npm run dev",
+    "backend:build": "cd backend && npm run build",
+    "frontend:install": "cd frontend && npm install",
+    "frontend:start": "cd frontend && npm start",
+    "frontend:build": "cd frontend && npm run build",
+    "install:all": "npm install && npm run backend:install && npm run frontend:install",
+    "dev": "concurrently \"npm:backend:dev\" \"npm:frontend:start\"",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.1"
+  },
+  "keywords": [
+    "voice-ai",
+    "openai",
+    "whatsapp",
+    "automation",
+    "portal",
+    "dashboard"
+  ],
+  "author": "Azizi Team",
+  "license": "MIT"
+}

@@ -1,0 +1,239 @@
+[
+  {
+    "id": "001-20260110-n8n-data-extraction-fix",
+    "description": "n8n workflow data extraction fix",
+    "type": "fix",
+    "milestone": "n8n-integration",
+    "tasks": [
+      "Diagnose why Set node expressions return null for nested paths",
+      "Test Code node as alternative for data extraction",
+      "Document Set node depth limitation in docs/n8n/01-n8n-integration-v2.md"
+    ],
+    "verification": [
+      "Send test message to webhook",
+      "Check webhook.site receives correct from and messageBody values",
+      "Confirm dataType, sessionId, from, messageBody all populated"
+    ],
+    "changelog": "Fixed n8n 2.x data extraction using Code node (Set node depth limitation workaround)",
+    "passes": true
+  },
+  {
+    "id": "002-20260110-workflow-versioning-fix",
+    "description": "n8n workflow versioning fix",
+    "type": "fix",
+    "milestone": "n8n-integration",
+    "tasks": [
+      "Diagnose why workflow changes don't take effect after database update",
+      "Discover workflow_history table requirement",
+      "Implement correct update pattern: INSERT workflow_history FIRST, then UPDATE workflow_entity"
+    ],
+    "verification": [
+      "Update workflow via database",
+      "Restart n8n",
+      "Confirm new workflow version is activated in logs"
+    ],
+    "passes": true
+  },
+  {
+    "id": "003-20260110-docker-network-timeout",
+    "description": "Docker network timeout fix",
+    "type": "fix",
+    "milestone": "n8n-integration",
+    "tasks": [
+      "Diagnose why HTTP Request node times out calling WhatsApp API",
+      "Test network connectivity from n8n container",
+      "Change URL from external (https://wa.dater.world) to internal Docker network (http://wwebjs-api:3000)"
+    ],
+    "verification": [
+      "Test wget from n8n container to internal URL",
+      "Deploy workflow with internal URL",
+      "Send WhatsApp message and receive echo reply"
+    ],
+    "changelog": "Fixed Docker network timeout by using internal container URLs",
+    "passes": true
+  },
+  {
+    "id": "004-20260110-echo-reply-deployment",
+    "description": "Echo reply workflow deployment",
+    "type": "feature",
+    "milestone": "n8n-integration",
+    "tasks": [
+      "Create workflow JSON with webhook, IF node, Echo Reply HTTP node, Respond OK",
+      "Deploy workflow to n8n database (workflow_history + workflow_entity)",
+      "Restart n8n to activate workflow"
+    ],
+    "verification": [
+      "Send WhatsApp message to bot number 254748085137",
+      "Receive echo reply with message content",
+      "Check n8n execution shows success status"
+    ],
+    "changelog": "Added WhatsApp echo reply bot with n8n 2.x integration",
+    "passes": true
+  },
+  {
+    "id": "005-20260110-duplicate-echo-fix",
+    "description": "Fix duplicate echo reply messages",
+    "type": "fix",
+    "priority": "high",
+    "milestone": "n8n-integration",
+    "tasks": [
+      "Add fromMe filter to IF node condition to ignore bot's own messages",
+      "Update condition: (dataType === message OR message_create) AND fromMe === false",
+      "Access fromMe at path: $json.body.data.message.fromMe"
+    ],
+    "verification": [
+      "Send WhatsApp message to bot",
+      "Receive exactly 1 echo reply (not 2)",
+      "Check n8n execution logs show only 1 Echo Reply execution per incoming message"
+    ],
+    "changelog": "Fixed duplicate message responses in n8n echo bot",
+    "passes": true
+  },
+  {
+    "id": "006-20260110-docs-indexed-filenames",
+    "description": "Reorganize docs with indexed filenames",
+    "type": "improvement",
+    "milestone": "docs-restructure",
+    "tasks": [
+      "Rename docs files with index prefixes (01-, 02-, etc.)",
+      "Update all cross-references in documentation",
+      "Update docs/README.md index"
+    ],
+    "verification": [
+      "All documentation links resolve correctly",
+      "Index numbers reflect reading order and importance"
+    ],
+    "changelog": "Reorganized documentation with indexed file naming convention",
+    "passes": true
+  },
+  {
+    "id": "007-20260110-remove-root-session-docs",
+    "description": "Remove root-level session docs",
+    "type": "chore",
+    "milestone": "docs-restructure",
+    "tasks": [
+      "Remove N8N_CHANGES.md from root",
+      "Remove SESSION.md from root",
+      "Remove WHATSAPP_API_SETUP.md from root",
+      "Update all references to point to docs/ equivalents"
+    ],
+    "verification": [
+      "No broken references in codebase",
+      "Root folder contains only essential files"
+    ],
+    "changelog": "Consolidated root-level docs into docs/ folder structure",
+    "passes": true
+  },
+  {
+    "id": "008-20260110-task-types-changelog",
+    "description": "Add task types and changelog integration",
+    "type": "improvement",
+    "milestone": "workflow-improvements",
+    "tasks": [
+      "Add type field to task format (fix, feature, improvement, docs, etc.)",
+      "Add optional priority, milestone, changelog fields",
+      "Document CHANGELOG.md integration rules",
+      "Update existing tasks with new format"
+    ],
+    "verification": [
+      "tasks.json uses new format",
+      "CHANGELOG.md updated with session entries",
+      ".claude/rules/tasks.md documents new fields"
+    ],
+    "changelog": "Enhanced task tracking format with type classification and changelog integration",
+    "passes": true
+  },
+  {
+    "id": "009-20260110-n8n-credentials-x-api-key",
+    "description": "n8n credentials with x-api-key authentication",
+    "type": "feature",
+    "priority": "high",
+    "milestone": "v0.1.0",
+    "scope": "packages/whatsapp-n8n-nodes",
+    "tasks": [
+      "Update WhatsAppBotApi.credentials.ts with x-api-key header (not Bearer token)",
+      "Add sessionId as required field for single-session MVP",
+      "Add timeout configuration option with 30s default",
+      "Configure credential test against /health endpoint"
+    ],
+    "verification": [
+      "npm run build compiles without TypeScript errors",
+      "Unit tests pass for credential type structure",
+      "Credential test endpoint returns success in n8n UI"
+    ],
+    "changelog": "Added WhatsApp Bot API credentials with x-api-key authentication",
+    "passes": true,
+    "markedCompletedAt": "2026-01-10"
+  },
+  {
+    "id": "010-20260110-n8n-action-node",
+    "description": "n8n action node with direct wwebjs-api calls",
+    "type": "feature",
+    "priority": "high",
+    "milestone": "v0.1.0",
+    "scope": "packages/whatsapp-n8n-nodes",
+    "tasks": [
+      "Rewrite WhatsAppBot.node.ts for direct API calls (not /webhook)",
+      "Implement sendText operation calling /client/sendMessage/{sessionId}",
+      "Implement replyToMessage operation calling /message/reply/{sessionId}",
+      "Implement reactToMessage operation calling /message/react/{sessionId}",
+      "Add proper NodeOperationError handling with axios error wrapping"
+    ],
+    "verification": [
+      "npm run build compiles without TypeScript errors",
+      "Unit tests pass for action node operations",
+      "sendText operation successfully sends message via wwebjs-api"
+    ],
+    "changelog": "Added WhatsApp Bot action node with sendText, reply, and react operations",
+    "passes": true,
+    "markedCompletedAt": "2026-01-10"
+  },
+  {
+    "id": "011-20260110-n8n-trigger-node",
+    "description": "n8n trigger node with toNumber/fromNumber filters",
+    "type": "feature",
+    "priority": "high",
+    "milestone": "v0.1.0",
+    "scope": "packages/whatsapp-n8n-nodes",
+    "tasks": [
+      "Rewrite WhatsAppBotTrigger.node.ts for wwebjs-api payload structure",
+      "Add filterToNumber property for bot number filtering",
+      "Add filterFromNumber property for sender filtering",
+      "Add filterSessionId property for multi-session support",
+      "Add ignoreFromMe toggle to skip bot's own messages",
+      "Flatten output data (messageId, messageBody, from, to) for easier n8n use"
+    ],
+    "verification": [
+      "npm run build compiles without TypeScript errors",
+      "Unit tests pass for trigger node filtering logic",
+      "Trigger correctly filters messages by toNumber and fromNumber"
+    ],
+    "changelog": "Added WhatsApp Bot trigger node with toNumber/fromNumber filtering",
+    "passes": true,
+    "markedCompletedAt": "2026-01-10"
+  },
+  {
+    "id": "012-20260110-deployment-script",
+    "description": "Create n8n nodes deployment script",
+    "type": "feature",
+    "priority": "high",
+    "milestone": "v0.1.0",
+    "scope": "packages/whatsapp-n8n-nodes/deploy",
+    "tasks": [
+      "Create deploy/deploy.ts with SSH/SCP automation using node-ssh",
+      "Create deploy/config.example.ts with deployment configuration",
+      "Add backup functionality before deployment",
+      "Add deployment logging to deploy/logs/",
+      "Add npm scripts: deploy, deploy:backup, deploy:verify"
+    ],
+    "verification": [
+      "npm run deploy successfully deploys to remote server",
+      "Backup created before deployment",
+      "Deployment log saved with timestamp",
+      "n8n restarts and loads custom nodes"
+    ],
+    "changelog": "Added automated deployment script for n8n custom nodes",
+    "passes": true,
+    "markedCompletedAt": "2026-01-10"
+  }
+]

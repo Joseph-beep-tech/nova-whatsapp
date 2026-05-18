@@ -1,0 +1,784 @@
+[
+  {
+    "id": "020-20260112-group-resource-node",
+    "description": "Add Group resource to WhatsApp n8n node",
+    "type": "feature",
+    "priority": 50,
+    "status": "cancelled",
+    "cancelled": true,
+    "milestone": "v1.2",
+    "scope": "packages/whatsapp-n8n-nodes",
+    "tasks": [
+      "Add Group resource selector to WhatsAppBot.node.ts",
+      "Add operations: create, leave, addParticipants, removeParticipants",
+      "Add operations: promoteParticipants, demoteParticipants",
+      "Add operations: setSubject, setDescription, getInviteCode"
+    ],
+    "verification": [
+      "Group operations appear in n8n UI",
+      "Create group operation successfully creates WhatsApp group",
+      "All group management operations work correctly",
+      "docs/n8n/ planned: document Group operations with examples and failure modes."
+    ],
+    "passes": false
+  },
+  {
+    "id": "023-20260117-health-monitoring-service",
+    "description": "Add health monitoring endpoints to whatsapp-service",
+    "type": "feature",
+    "priority": null,
+    "status": "completed",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/routes/",
+        "packages/whatsapp-service/src/types/"
+      ],
+      "docs": [
+        "docs/whatsapp/02-api-reference.md"
+      ],
+      "summary": "whatsapp-service is a thin translation layer. wwebjs-api exposes /session/status/{sessionId} and /session/getSessions for session discovery. n8n exposes /healthz."
+    },
+    "design": {
+      "problem": "Session names are dynamic (not always 'mysession'). Multiple services to monitor (whatsapp-service, wwebjs-api, n8n). Need unified health status for monitoring tools.",
+      "solution": "Add health endpoints to whatsapp-service that aggregate status from all components. whatsapp-service becomes the health aggregator for the WhatsApp integration stack.",
+      "architecture": "Monitoring Tool -> whatsapp-service /health/* -> wwebjs-api /session/* + n8n /healthz",
+      "endpoints": {
+        "GET /health": "Liveness probe - returns { status: 'ok' }",
+        "GET /health/ready": "Readiness check - returns { wwebjs: bool, n8n: bool }",
+        "GET /health/sessions": "All session statuses from wwebjs-api via /session/getSessions then /session/status/{id} for each"
+      },
+      "config": {
+        "WWEBJS_API_URL": "URL to wwebjs-api (e.g., http://wwebjs-api:3000 or http://localhost:3000)",
+        "N8N_URL": "Optional URL to n8n for readiness check (e.g., http://n8n:5678)",
+        "HEALTH_CHECK_TIMEOUT": "Timeout in ms for upstream health checks (default: 5000)"
+      }
+    },
+    "tasks": [
+      "Add HealthController with /health, /health/ready, /health/sessions routes",
+      "Add HealthService to call wwebjs-api /session/getSessions and /session/status/{id}",
+      "Add types: HealthStatus, SessionHealth, ReadinessStatus",
+      "Add config validation for WWEBJS_API_URL (required) and N8N_URL (optional)",
+      "Add timeout handling for upstream calls (configurable via HEALTH_CHECK_TIMEOUT)",
+      "Update whatsapp-service README with health endpoint documentation",
+      "Update docs/whatsapp/02-api-reference.md with health endpoints section"
+    ],
+    "verification": [
+      "GET /health returns 200 { status: 'ok' } when service is running",
+      "GET /health/ready returns 200 with wwebjs: true when wwebjs-api is reachable",
+      "GET /health/sessions returns list of all sessions with their connection status",
+      "GET /health/ready returns wwebjs: false (not 500) when wwebjs-api is unreachable",
+      "Timeouts are respected - slow upstream doesn't hang the health endpoint",
+      "docs/whatsapp/ planned: add health endpoint reference and monitoring examples."
+    ],
+    "notes": {
+      "session_discovery": "Use GET /session/getSessions to discover all active sessions dynamically, avoiding hardcoded session names",
+      "graceful_degradation": "Health endpoints should return partial data on partial failure, not 500",
+      "docker_compose_integration": "Once implemented, docker-compose.override.yml can use: healthcheck: test: curl -f http://localhost:3000/health/ready"
+    },
+    "passes": true
+  },
+  {
+    "id": "033-20260120-comprehensive-testing",
+    "description": "Comprehensive testing suite (Phase C)",
+    "type": "chore",
+    "priority": null,
+    "status": "cancelled",
+    "cancelled": true,
+    "milestone": "v0.3.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "013-20260112-verify-send-media-api",
+      "018-20260112-verify-multi-session"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/__tests__/"
+      ],
+      "docs": [
+        "spec/multi-session/07-testing-roadmap.md"
+      ],
+      "summary": "Unit, integration, load, and E2E testing"
+    },
+    "subtasks": [
+      {
+        "id": "033.1-unit-tests",
+        "description": "Unit test coverage",
+        "tasks": [
+          "Add unit tests for MultiSessionManager",
+          "Add unit tests for WebhookRouter",
+          "Achieve 80% coverage"
+        ],
+        "verification": [
+          "Run `npm test` and confirm the full unit test suite passes.",
+          "Coverage report shows at least 80% line coverage for targeted modules."
+        ],
+        "passes": false
+      },
+      {
+        "id": "033.2-integration-tests",
+        "description": "Integration tests",
+        "depends_on": [
+          "033.1-unit-tests"
+        ],
+        "tasks": [
+          "Add API integration tests",
+          "Add session lifecycle tests"
+        ],
+        "verification": [
+          "Run integration tests and confirm all scenarios pass without flakes."
+        ],
+        "passes": false
+      },
+      {
+        "id": "033.3-e2e-tests",
+        "description": "End-to-end tests",
+        "depends_on": [
+          "033.2-integration-tests"
+        ],
+        "tasks": [
+          "Add E2E test for message flow",
+          "Add E2E test for multi-session"
+        ],
+        "verification": [
+          "Run E2E tests against running services and confirm all flows pass."
+        ],
+        "passes": false
+      }
+    ],
+    "changelog": "Added comprehensive test suite with 80%+ coverage",
+    "passes": false
+  },
+  {
+    "id": "034-20260120-orchestration-dashboard",
+    "description": "WhatsApp Orchestration Dashboard & HITL Interface",
+    "type": "feature",
+    "priority": null,
+    "status": "cancelled",
+    "cancelled": true,
+    "cancelled_reason": "Superseded by task 042 (dashboard SPA). Socket.io real-time engine tracked as GitHub issue #12.",
+    "milestone": "v0.4.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/views/",
+        "packages/whatsapp-service/src/index.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Real-time management dashboard with log streaming, session orchestration, and HITL chat."
+    },
+    "subtasks": [
+      {
+        "id": "034.1-websocket-engine",
+        "description": "Implement Socket.io real-time engine",
+        "tasks": [
+          "Install socket.io and socket.io-client",
+          "Integrate Socket.io into Express server in index.ts",
+          "Create internal EventHub for broadcasting system events",
+          "Implement log capturing middleware that emits to sockets"
+        ],
+        "verification": [
+          "Logs appear in the browser console via WebSocket within 200ms latency."
+        ],
+        "passes": false
+      },
+      {
+        "id": "034.2-realtime-logs-ui",
+        "description": "Build real-time log viewer",
+        "depends_on": [
+          "034.1-websocket-engine"
+        ],
+        "tasks": [
+          "Update logs.html to use socket.io-client",
+          "Implement auto-scroll and level filtering in frontend",
+          "Add 'Clear Logs' button with server-side confirmation",
+          "Add connection status indicator (Socket.io connected/disconnected)"
+        ],
+        "verification": [
+          "Logs stream to UI in real time without refresh and can be filtered."
+        ],
+        "passes": false
+      },
+      {
+        "id": "034.3-session-orchestrator-ui",
+        "description": "Build session orchestration interface",
+        "tasks": [
+          "Enhance sessions.html with dynamic cards per session",
+          "Add real-time QR code display with auto-refresh",
+          "Implement 'Restart Session' and 'Delete Session' buttons",
+          "Add telemetry display (battery, signal) from wwebjs-api"
+        ],
+        "verification": [
+          "Session status updates in the UI without refresh and shows correct states."
+        ],
+        "passes": false
+      },
+      {
+        "id": "034.4-hitl-conversation-viewer",
+        "description": "Implement HITL Conversation Viewer",
+        "tasks": [
+          "Create conversations.html view with sidebar and chat area",
+          "Add /api/chats and /api/messages endpoints",
+          "Implement 'Manual Message' box with agent takeover API",
+          "Display n8n execution IDs next to bot messages"
+        ],
+        "verification": [
+          "Agents can see live chats and send manual messages with clear status feedback.",
+          "docs/dashboard/ planned: add a HITL usage guide for non-technical support agents."
+        ],
+        "passes": false
+      }
+    ],
+    "changelog": "Added real-time orchestration dashboard and HITL interface",
+    "passes": false
+  },
+  {
+    "id": "042-20260122-dashboard-frontend-package",
+    "description": "Create modern dashboard SPA package",
+    "type": "feature",
+    "priority": 11,
+    "status": "completed",
+    "milestone": "v0.6.0",
+    "scope": "packages/whatsapp-dashboard",
+    "references": [
+      "034-20260120-orchestration-dashboard",
+      "041-20260122-dashboard-prd-keycloak-and-min-nav",
+      "031-20260120-frontend-session-management (merged)"
+    ],
+    "context": {
+      "files": [
+        "CLAUDE.md",
+        "spec/design-language/00-design-philosophy.md",
+        "spec/design-language/01-typography.md",
+        "spec/design-language/02-layout-and-navigation.md",
+        "spec/design-language/03-components-and-effects.md"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Create a dedicated React+TS dashboard package with minimal routes and split-pane/column layouts. SPA assumes server-side session (BFF) and never stores raw tokens."
+    },
+    "subtasks": [
+      {
+        "id": "042.1-research-stack-and-routing",
+        "description": "Choose SPA stack and route structure",
+        "context": {
+          "files": [
+            "packages/whatsapp-service/package.json",
+            "spec/design-language/00-design-philosophy.md",
+            "spec/design-language/02-layout-and-navigation.md"
+          ],
+          "docs": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "summary": "Align on React+TS tooling (Vite preferred) and confirm the exact 3 routes and pane layouts."
+        },
+        "tasks": [
+          "Decide SPA tooling (Vite + React 18 + TS), router choice, and websocket client approach",
+          "Lock the route map: /dashboard (tabs), /dashboard/conversations, /dashboard/admin",
+          "Define core layout primitives: AppShell, Tabs, SplitPane (2-col), TriPane (3-col), FilterPanel, StreamView"
+        ],
+        "verification": [
+          "Subtask output lists the exact dependencies to add (no placeholders) and why each is required",
+          "Route map exactly matches PRD and is limited to 3 routes",
+          "Layout primitives cover: sessions grid + detail, logs/events filters + stream, conversations 3-column"
+        ],
+        "output": "Final dashboard SPA stack and UI information architecture",
+        "passes": true
+      },
+      {
+        "id": "042.2-scaffold-dashboard-package",
+        "description": "Scaffold whatsapp-dashboard package",
+        "depends_on": [
+          "042.1-research-stack-and-routing"
+        ],
+        "context": {
+          "files": [
+            "package.json",
+            "spec/design-language/01-typography.md",
+            "spec/design-language/03-components-and-effects.md"
+          ],
+          "prior_output": "042.1 SPA stack decision",
+          "summary": "Create packages/whatsapp-dashboard with build scripts and skeleton pages."
+        },
+        "tasks": [
+          "Create `packages/whatsapp-dashboard/` with build/test/lint scripts consistent with monorepo",
+          "Implement AppShell with 3 nav items and a consistent header + tenant selector placeholder",
+          "Implement skeleton pages with required layouts (no data yet): Dashboard tabs, Conversations tri-pane, Admin",
+          "Add shared UI components: StatusPill, DataKeyValue, EmptyState, LoadingState, ErrorBanner"
+        ],
+        "verification": [
+          "Dashboard package builds successfully (TypeScript compile plus a production build).",
+          "Routes render the intended layouts without runtime errors in a fresh browser.",
+          "No auth tokens are stored in localStorage/sessionStorage; cookie session only.",
+          "docs/dashboard/ planned: add a non-technical quickstart for business users audience."
+        ],
+        "output": "Dashboard SPA package bootstrapped with layout skeleton",
+        "passes": true
+      },
+      {
+        "id": "042.3-implement-sessions-tab",
+        "description": "Build Sessions tab (grid + detail + timeline)",
+        "depends_on": [
+          "042.2-scaffold-dashboard-package"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md",
+            "spec/design-language/02-layout-and-navigation.md",
+            "spec/design-language/03-components-and-effects.md"
+          ],
+          "prior_output": "042.2 dashboard skeleton",
+          "summary": "Implement the Sessions UI: grid of sessions and a right-pane detail view showing timeline + filtered events/logs."
+        },
+        "tasks": [
+          "Implement sessions grid with status pills and quick filters (connected/qr-required/disconnected)",
+          "Implement selected session detail pane with telemetry, action buttons (RBAC gated), and timeline",
+          "Wire to REST endpoints (GET /api/sessions, GET /api/events filtered by sessionId) and realtime stream subscription",
+          "Add empty/loading/error states that do not break layout",
+          "Display QR code for unauthenticated sessions with auto-refresh",
+          "Add create/delete session actions (merged from 031)"
+        ],
+        "verification": [
+          "Selecting a session updates the right pane without navigation or page refresh.",
+          "Events/logs filter by selected sessionId and continue updating in real time.",
+          "Action buttons are hidden or disabled when the user lacks required permission.",
+          "docs/dashboard/ planned: add business-friendly session status explanations and screenshots here."
+        ],
+        "output": "Sessions tab implemented and wired to service APIs",
+        "passes": true
+      },
+      {
+        "id": "042.4-implement-logs-events-tab",
+        "description": "Build Logs+Events tab (filters + raw/structured)",
+        "depends_on": [
+          "042.2-scaffold-dashboard-package"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md",
+            "spec/design-language/03-components-and-effects.md"
+          ],
+          "prior_output": "042.2 dashboard skeleton",
+          "summary": "Implement the 2-column Logs+Events view with a filter panel and a stream that can toggle raw vs structured cards."
+        },
+        "tasks": [
+          "Implement filter panel (tenant/session/level/eventType/correlationId/time range) with debounced inputs",
+          "Implement stream view with raw toggle and structured cards (inbound webhook, routing decision, outbound send result)",
+          "Implement a correlationId quick-jump (paste correlationId and auto-filter)",
+          "Wire to websocket stream (live) and REST /api/events (history) with pagination"
+        ],
+        "verification": [
+          "Filters affect both historical results and the live stream subscription consistently.",
+          "Structured cards display key fields without exposing secrets; redaction is enforced.",
+          "CorrelationId filter returns only matching events and remains stable across refresh.",
+          "docs/dashboard/ planned: add a guide for searching by correlationId and filters."
+        ],
+        "output": "Logs+Events tab implemented with filtering and structured cards",
+        "passes": true
+      },
+      {
+        "id": "042.5-implement-conversations-page",
+        "description": "Build Conversations (3-column HITL UI)",
+        "depends_on": [
+          "042.2-scaffold-dashboard-package"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md",
+            "spec/design-language/02-layout-and-navigation.md",
+            "spec/design-language/03-components-and-effects.md"
+          ],
+          "prior_output": "042.2 dashboard skeleton",
+          "summary": "Implement tri-pane conversation viewer with manual send (takeover) and a metadata side panel."
+        },
+        "tasks": [
+          "Implement chat list with search and status/assignment filters",
+          "Implement message thread rendering with bot/human distinction and timestamps",
+          "Implement takeover text box (RBAC gated) and show send status/error inline",
+          "Implement metadata panel (routing decision, last execution link, correlationId, recent errors)"
+        ],
+        "verification": [
+          "Selecting a chat updates thread and metadata panel without page reload.",
+          "Manual send UI calls takeover endpoint and shows success/failure clearly.",
+          "Bot vs human messages are visually distinct, consistent, and accessible.",
+          "docs/dashboard/ planned: add a HITL guide for non-technical support agents."
+        ],
+        "output": "Conversations page implemented",
+        "passes": true
+      },
+      {
+        "id": "042.6-implement-admin-page",
+        "description": "Build Admin page (keys + audit viewer)",
+        "depends_on": [
+          "042.2-scaffold-dashboard-package"
+        ],
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md",
+            "spec/design-language/02-layout-and-navigation.md",
+            "spec/design-language/03-components-and-effects.md"
+          ],
+          "prior_output": "042.2 dashboard skeleton",
+          "summary": "Implement key management UX and audit log viewer with minimal navigation."
+        },
+        "tasks": [
+          "Implement key list view (integration keys + PATs) showing status, role, scopes summary, lastUsedAt",
+          "Implement create key flow that shows raw secret once with copy-to-clipboard and acknowledgement",
+          "Implement revoke/rotate flows with confirmation dialogs",
+          "Implement audit log viewer with filters (actor/action/target/time range) and drill-down"
+        ],
+        "verification": [
+          "Admin UI never displays stored secrets after creation; only one-time reveal.",
+          "Revoking or rotating a key updates UI state and creates audit entries.",
+          "Audit viewer filters work and never show cross-tenant entries for any user.",
+          "docs/guides/user-management/ planned: explain roles, PATs, and key lifecycle to admins."
+        ],
+        "output": "Admin page implemented for keys and audits",
+        "passes": true
+      }
+    ],
+    "changelog": "Added a modern dashboard SPA package with minimal navigation and split-pane layouts",
+    "passes": true
+  },
+  {
+    "id": "043-20260122-keycloak-bff-auth-service",
+    "description": "Add Keycloak OIDC auth (BFF session) to service",
+    "type": "security",
+    "priority": 12,
+    "status": "completed",
+    "milestone": "v0.6.0",
+    "scope": "packages/whatsapp-service",
+    "references": [
+      "041-20260122-dashboard-prd-keycloak-and-min-nav"
+    ],
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/src/middleware/basicAuth.ts"
+      ],
+      "docs": [
+        "spec/10-service-dashboard-prd.md"
+      ],
+      "summary": "Replace Basic Auth admin UI with Keycloak OIDC login. Use a BFF cookie session so the SPA never handles raw access tokens."
+    },
+    "subtasks": [
+      {
+        "id": "043.1-research-keycloak-config",
+        "description": "Define Keycloak roles/claims and env vars",
+        "context": {
+          "files": [
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "summary": "We need a concrete Keycloak contract (roles, tenant claim, redirect URIs) before implementing."
+        },
+        "tasks": [
+          "Define required roles: creator_admin, tenant_admin, agent, automation_engineer, read_only",
+          "Choose tenant scoping claim name (prefer a single claim like tenant_id); document fallback if absent",
+          "Define service OIDC endpoints: /auth/login, /auth/callback, /auth/logout, /auth/me and required redirect URIs"
+        ],
+        "verification": [
+          "Roles list matches PRD and is finalized with exact Keycloak role names.",
+          "Tenant scoping claim name is defined and documented for all environments.",
+          "Service auth endpoints and redirect paths are enumerated without placeholders.",
+          "docs/keycloak/ planned: document realm roles, claims, and redirect URI setup."
+        ],
+        "output": "Keycloak auth contract and env var list for implementation",
+        "passes": true
+      },
+      {
+        "id": "043.2-design-route-auth-matrix",
+        "description": "Design auth matrix and session security",
+        "depends_on": [
+          "043.1-research-keycloak-config"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts"
+          ],
+          "prior_output": "043.1 Keycloak contract",
+          "summary": "Separate route protection: public, integration (API key), dashboard (session/PAT)."
+        },
+        "tasks": [
+          "Define route groups and required auth: public (/health), integration (webhook/events/register), dashboard UI+API (/dashboard, /api/*)",
+          "Define CSRF protection strategy for cookie-session endpoints (same-site + origin checks or explicit token)",
+          "Define how roles/tenantId are extracted into a typed request auth context"
+        ],
+        "verification": [
+          "Auth matrix covers all existing endpoints in packages/whatsapp-service/src/index.ts for clarity.",
+          "CSRF strategy is explicit, testable, and documented for cookie-session endpoints.",
+          "Request auth context shape is defined: actorType, actorId, tenantId, roles, scopes.",
+          "docs/keycloak/ planned: add a diagram for session vs API-key protected routes."
+        ],
+        "output": "Auth matrix and session security design",
+        "passes": true
+      },
+      {
+        "id": "043.3-implement-oidc-session",
+        "description": "Implement OIDC login/callback/logout and session cookies",
+        "depends_on": [
+          "043.2-design-route-auth-matrix"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts",
+            "packages/whatsapp-service/src/middleware/basicAuth.ts"
+          ],
+          "prior_output": "043.2 Auth matrix and session security design",
+          "summary": "Implement Keycloak code flow and a server-side session; protect dashboard routes; provide /auth/me for UI bootstrapping."
+        },
+        "tasks": [
+          "Implement /auth/login to redirect to Keycloak authorization endpoint",
+          "Implement /auth/callback to exchange code for tokens, validate ID token, and establish a secure server session",
+          "Implement /auth/logout to clear session and redirect to Keycloak logout",
+          "Implement /auth/me to return { authenticated, tenantId, roles, user } for the SPA",
+          "Replace/retire requireBasicAuth gating for dashboard routes (keep behind a feature flag if needed for rollback)"
+        ],
+        "verification": [
+          "GET /dashboard redirects to Keycloak login when the user is unauthenticated.",
+          "After login, GET /auth/me returns roles and tenantId for the current user.",
+          "No raw access tokens are stored in browser storage (localStorage/sessionStorage).",
+          "docs/keycloak/ planned: include troubleshooting for redirect, cookie, and proxy issues."
+        ],
+        "output": "Working Keycloak login/logout with server-side session and /auth/me bootstrap endpoint",
+        "passes": true
+      },
+      {
+        "id": "043.4-tests-and-docs",
+        "description": "Add auth tests and Keycloak setup docs",
+        "depends_on": [
+          "043.3-implement-oidc-session"
+        ],
+        "context": {
+          "files": [
+            "packages/whatsapp-service/src/index.ts",
+            "spec/10-service-dashboard-prd.md"
+          ],
+          "prior_output": "043.3 Working Keycloak session auth",
+          "summary": "Add test coverage and document required Keycloak realm/client configuration and environment variables."
+        },
+        "tasks": [
+          "Add unit/integration tests for auth flow endpoints (login redirect, callback error handling, /auth/me)",
+          "Document required Keycloak client config (redirect URIs, roles, tenant claim) and required env vars in docs/",
+          "Add security notes: cookie flags, CSRF strategy, and token refresh strategy (if applicable)"
+        ],
+        "verification": [
+          "Run `npm test` and confirm the auth tests pass reliably in CI.",
+          "docs/keycloak/ planned: document Keycloak setup, roles, tenant claim, and env vars.",
+          "Auth error cases return deterministic 401/403 responses and never leak tokens in logs.",
+          "docs/guides/user-management/ planned: add a non-technical login and roles overview guide."
+        ],
+        "output": "Auth tests passing and documentation added",
+        "passes": true
+      }
+    ],
+    "changelog": "Added Keycloak OIDC authentication for the dashboard using server-side sessions",
+    "passes": true
+  },
+  {
+    "id": "053-20260127-admin-ui-tailwind-bundle",
+    "description": "Bundle Tailwind CSS locally for admin pages (CSP fix)",
+    "type": "fix",
+    "priority": 20,
+    "status": "completed",
+    "milestone": "v0.2.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/views/sessions.html",
+        "packages/whatsapp-service/src/views/logs.html",
+        "packages/whatsapp-service/package.json"
+      ],
+      "summary": "Admin UI pages use Tailwind from CDN which is blocked by Content Security Policy. Need to bundle Tailwind locally so styling works."
+    },
+    "tasks": [
+      "Install tailwindcss as dev dependency",
+      "Create tailwind.config.js with content paths for src/views/*.html",
+      "Create src/styles/input.css with @tailwind directives",
+      "Add build:css script to compile Tailwind to src/views/styles.css",
+      "Update HTML files to link local styles.css instead of CDN",
+      "Add src/views/styles.css to copy-assets.ts for production build"
+    ],
+    "verification": [
+      "npm run build:css generates src/views/styles.css",
+      "Admin pages render with proper Tailwind styling when served locally",
+      "No CSP errors in browser console for /admin/sessions and /admin/logs"
+    ],
+    "changelog": "Fixed admin UI styling by bundling Tailwind CSS locally",
+    "passes": true
+  },
+  {
+    "id": "054-20260127-monorepo-restructure",
+    "description": "Separate git submodules from custom packages",
+    "type": "refactor",
+    "priority": 1,
+    "status": "completed",
+    "scope": "root",
+    "context": {
+      "files": [
+        ".gitmodules",
+        "docker-compose.yml",
+        "package.json"
+      ],
+      "docs": [
+        "spec/monorepo-restructure/README.md"
+      ]
+    },
+    "subtasks": [
+      {
+        "id": "054.1-move-submodules",
+        "description": "Move submodules to vendor/",
+        "priority": 1,
+        "context": {
+          "files": [
+            ".gitmodules"
+          ],
+          "docs": [
+            "spec/monorepo-restructure/01-move-submodules-to-vendor.md"
+          ]
+        },
+        "tasks": [
+          "git mv packages/whatsapp-api vendor/",
+          "git mv packages/n8n vendor/"
+        ],
+        "verification": [
+          "git submodule status shows vendor/ paths"
+        ],
+        "output": "Submodules relocated to vendor/",
+        "passes": true
+      },
+      {
+        "id": "054.2-update-paths",
+        "description": "Update docker-compose path references",
+        "priority": 2,
+        "depends_on": [
+          "054.1-move-submodules"
+        ],
+        "context": {
+          "files": [
+            "docker-compose.yml",
+            "packages/whatsapp-service/docker-compose.yml"
+          ],
+          "docs": [
+            "spec/monorepo-restructure/02-update-path-references.md"
+          ]
+        },
+        "tasks": [
+          "Update root docker-compose.yml",
+          "Update service docker-compose.yml"
+        ],
+        "verification": [
+          "docker compose config validates",
+          "docker compose build succeeds"
+        ],
+        "passes": true
+      },
+      {
+        "id": "054.3-create-deploy",
+        "description": "Create deploy/ directory structure",
+        "priority": 3,
+        "depends_on": [
+          "054.2-update-paths"
+        ],
+        "context": {
+          "docs": [
+            "spec/monorepo-restructure/03-create-deploy-directory.md"
+          ]
+        },
+        "tasks": [
+          "Create deploy/whatsapp-api/docker-compose.yml",
+          "Create deploy/whatsapp-api/.env.example"
+        ],
+        "verification": [
+          "docker compose -f deploy/whatsapp-api/docker-compose.yml config"
+        ],
+        "passes": true
+      },
+      {
+        "id": "054.4-update-gitignore",
+        "description": "Update .gitignore for deploy secrets",
+        "priority": 4,
+        "depends_on": [
+          "054.3-create-deploy"
+        ],
+        "context": {
+          "files": [
+            ".gitignore"
+          ],
+          "docs": [
+            "spec/monorepo-restructure/04-update-gitignore.md"
+          ]
+        },
+        "tasks": [
+          "Add deploy/*/.env",
+          "Add deploy/*/sessions/"
+        ],
+        "verification": [
+          "git check-ignore deploy/whatsapp-api/.env returns match"
+        ],
+        "passes": true
+      },
+      {
+        "id": "054.5-server-migration",
+        "description": "Migrate server with data preservation",
+        "priority": null,
+        "depends_on": [
+          "054.4-update-gitignore"
+        ],
+        "context": {
+          "docs": [
+            "spec/monorepo-restructure/05-server-migration.md"
+          ]
+        },
+        "tasks": [
+          "Backup sessions",
+          "Move data",
+          "Start new container",
+          "Verify session preserved"
+        ],
+        "verification": [
+          "curl http://localhost:3000/ping returns success",
+          "Session status shows CONNECTED"
+        ],
+        "output": "Server migrated to /var/opt/wa.dt.wrld/. Deploy structure active at deploy/whatsapp-api/ and deploy/whatsapp-service/. Patches system in place.",
+        "passes": true
+      }
+    ],
+    "changelog": "Reorganized monorepo: submodules to vendor/, deployment configs to deploy/",
+    "passes": true
+  },
+  {
+    "id": "055-20260203-swagger-api-documentation",
+    "description": "Add Swagger/OpenAPI documentation with tsoa",
+    "type": "feature",
+    "priority": null,
+    "status": "completed",
+    "milestone": "v0.6.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/index.ts",
+        "packages/whatsapp-service/package.json"
+      ],
+      "summary": "Add interactive Swagger UI at /api-docs/service with OpenAPI 3.0 spec generated from tsoa controllers. Document all 33 endpoints across 9 tags."
+    },
+    "tasks": [
+      "Create tsoa controllers mirroring existing Express routes",
+      "Generate OpenAPI 3.0 spec from TypeScript decorators",
+      "Set up Swagger UI at /api-docs/service",
+      "Add API key authentication via x-api-key header",
+      "Document all 33 endpoints across 9 tags (Health, Users, Tags, Welcome, Events, Webhook, Media, Queue, Progress)"
+    ],
+    "verification": [
+      "npm run type-check passes",
+      "npm run build passes",
+      "Access /api-docs/service and Swagger UI loads",
+      "Authorize with API key and test 'Try it out' on endpoints"
+    ],
+    "changelog": "Added interactive Swagger/OpenAPI documentation at /api-docs/service with tsoa",
+    "passes": true
+  }
+]

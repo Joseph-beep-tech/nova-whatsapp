@@ -1,0 +1,222 @@
+name: whatsapp-service
+
+# Standalone deployment for wa.dater.world — nginx-proxy + Let's Encrypt.
+# Does NOT require Dokploy or Traefik.
+#
+# Usage:
+#   cp .env.example .env && $EDITOR .env
+#   docker compose -f docker-compose.nginx-proxy.yml up -d
+#
+# Domains (configure DNS A records before first run):
+#   wa.dater.world         — dashboard (HITL multi-chat interface)
+#   wa.dater.world/service — whatsapp-service API + webhooks
+#   wa-im.dater.world      — wwebjs-api (WhatsApp Web JS session manager)
+
+services:
+
+  # ── Reverse proxy + TLS ───────────────────────────────────────────────────
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:latest
+    container_name: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - certs:/etc/nginx/certs
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    networks:
+      - proxy
+
+  acme-companion:
+    image: nginxproxy/acme-companion:latest
+    container_name: nginx-proxy-acme
+    restart: unless-stopped
+    depends_on:
+      - nginx-proxy
+    environment:
+      - NGINX_PROXY_CONTAINER=nginx-proxy
+      - DEFAULT_EMAIL=${LETSENCRYPT_EMAIL:-tech@aziziafrica.com}
+    volumes:
+      - certs:/etc/nginx/certs
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - acme:/etc/acme.sh
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy
+
+  # ── Data stores ───────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7-jammy
+    container_name: whatsapp-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=whatsapp-service
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER:-wabot}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:?MONGO_PASSWORD is required in .env}
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - queue
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: whatsapp-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - rag
+
+  # ── WhatsApp Web JS session manager ───────────────────────────────────────
+  wwebjs-api:
+    build:
+      context: ../../vendor/whatsapp-api
+      dockerfile: Dockerfile
+    container_name: wwebjs-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - API_KEY=${WWEBJS_API_KEY:?WWEBJS_API_KEY is required in .env}
+      - BASE_WEBHOOK_URL=${WWEBJS_BASE_WEBHOOK_URL:-http://whatsapp-service:3001/service/events}
+      - ENABLE_WEBHOOK=${WWEBJS_ENABLE_WEBHOOK:-TRUE}
+      - ENABLE_WEBSOCKET=true
+      - RECOVER_SESSIONS=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # nginx-proxy routing
+      - VIRTUAL_HOST=wa-im.dater.world
+      - VIRTUAL_PORT=3000
+      - LETSENCRYPT_HOST=wa-im.dater.world
+    volumes:
+      - wwebjs-sessions:/usr/src/app/sessions
+    networks:
+      - internal
+      - proxy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/ping', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── WhatsApp service — API + event processing ─────────────────────────────
+  whatsapp-service:
+    build:
+      context: ../../packages/whatsapp-service
+      dockerfile: Dockerfile
+    container_name: whatsapp-service
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - API_KEY=${API_KEY:?API_KEY is required in .env}
+      - NODE_ENV=production
+      - PORT=3001
+      - MONGODB_URI=mongodb://${MONGO_USER:-wabot}:${MONGO_PASSWORD}@mongodb:27017/whatsapp-service?authSource=admin
+      - WHATSAPP_API_URL=${WHATSAPP_API_URL:-http://wwebjs-api:3000}
+      - ENABLE_EVENT_QUEUE=${ENABLE_EVENT_QUEUE:-false}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - ENABLE_QDRANT=${ENABLE_QDRANT:-false}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-minilm-l6-v2}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
+      - ENABLE_ERPNEXT_SYNC=${ENABLE_ERPNEXT_SYNC:-false}
+      - ERPNEXT_URL=${ERPNEXT_URL:-}
+      - ERPNEXT_API_KEY=${ERPNEXT_API_KEY:-}
+      - ERPNEXT_API_SECRET=${ERPNEXT_API_SECRET:-}
+      - ERPNEXT_WEBHOOK_SECRET=${ERPNEXT_WEBHOOK_SECRET:-}
+      # nginx-proxy: path-based routing for /service on wa.dater.world
+      - VIRTUAL_HOST=wa.dater.world
+      - VIRTUAL_PATH=/service
+      - VIRTUAL_PORT=3001
+      - LETSENCRYPT_HOST=wa.dater.world
+    networks:
+      - internal
+      - proxy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/service/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Dashboard — HITL multi-chat interface ─────────────────────────────────
+  # nginx inside the container proxies /api → whatsapp-service:3001/service
+  # and /socket.io → whatsapp-service:3001/socket.io (WebSocket)
+  whatsapp-dashboard:
+    build:
+      context: ../../packages/whatsapp-dashboard
+      dockerfile: Dockerfile
+    container_name: whatsapp-dashboard
+    restart: unless-stopped
+    depends_on:
+      whatsapp-service:
+        condition: service_healthy
+    environment:
+      # nginx-proxy: catch-all for wa.dater.world (dashboard serves root)
+      - VIRTUAL_HOST=wa.dater.world
+      - VIRTUAL_PATH=/
+      - VIRTUAL_PORT=3002
+      - LETSENCRYPT_HOST=wa.dater.world
+    networks:
+      - internal
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/ > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  certs:
+  vhost:
+  html:
+  acme:
+  mongodb-data:
+  redis-data:
+  qdrant-data:
+  wwebjs-sessions:
+
+networks:
+  # Internal service communication (not exposed externally)
+  internal:
+    driver: bridge
+  # nginx-proxy network — all proxied services must join this
+  proxy:
+    driver: bridge

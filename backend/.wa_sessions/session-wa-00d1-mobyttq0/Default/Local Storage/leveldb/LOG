@@ -1,0 +1,6 @@
+2026/04/24-00:36:49.547 2225326 Reusing MANIFEST /Users/Ln/Downloads/azizi-voice-ai-master/backend/.wa_sessions/session-wa-00d1-mobyttq0/Default/Local Storage/leveldb/MANIFEST-000001
+2026/04/24-00:36:49.549 2225326 Recovering log #3
+2026/04/24-00:36:49.550 2225326 Reusing old log /Users/Ln/Downloads/azizi-voice-ai-master/backend/.wa_sessions/session-wa-00d1-mobyttq0/Default/Local Storage/leveldb/000003.log 
+2026/04/24-02:35:24.253 222532b Level-0 table #5: started
+2026/04/24-02:35:24.256 222532b Level-0 table #5: 17196 bytes OK
+2026/04/24-02:35:24.259 222532b Delete type=0 #3

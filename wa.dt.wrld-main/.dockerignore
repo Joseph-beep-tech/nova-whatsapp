@@ -1,0 +1,23 @@
+node_modules
+npm-debug.log
+dist
+coverage
+.git
+.gitignore
+README.md
+.env
+.env.local
+.env.production
+logs
+sessions
+shared
+deployment
+research
+.claude
+*.log
+.DS_Store
+Thumbs.db
+
+# Task management (development-only)
+tasks.json
+archive/

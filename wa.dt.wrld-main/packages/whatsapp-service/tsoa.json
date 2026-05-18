@@ -1,0 +1,71 @@
+{
+  "entryFile": "src/index.ts",
+  "noImplicitAdditionalProperties": "throw-on-extras",
+  "controllerPathGlobs": ["src/controllers/**/*.ts"],
+  "spec": {
+    "outputDirectory": "src/generated",
+    "specVersion": 3,
+    "securityDefinitions": {
+      "api_key": {
+        "type": "apiKey",
+        "name": "x-api-key",
+        "in": "header",
+        "description": "API key authentication via x-api-key header"
+      }
+    },
+    "basePath": "/service",
+    "host": "localhost:3001",
+    "schemes": ["http", "https"],
+    "tags": [
+      {
+        "name": "Health",
+        "description": "Service health and readiness endpoints"
+      },
+      {
+        "name": "Users",
+        "description": "User registration and tag management"
+      },
+      {
+        "name": "Tags",
+        "description": "Tag configuration for smart routing"
+      },
+      {
+        "name": "Welcome",
+        "description": "Welcome message configuration"
+      },
+      {
+        "name": "Events",
+        "description": "WhatsApp event processing pipeline"
+      },
+      {
+        "name": "Webhook",
+        "description": "n8n webhook actions and registration"
+      },
+      {
+        "name": "Media",
+        "description": "Media proxy and caching"
+      },
+      {
+        "name": "Queue",
+        "description": "Event queue statistics (when enabled)"
+      },
+      {
+        "name": "Chats",
+        "description": "Conversation management and agent takeover"
+      }
+    ]
+  },
+  "routes": {
+    "routesDir": "src/generated",
+    "basePath": "/service",
+    "authenticationModule": "src/middleware/tsoaAuth.ts"
+  },
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["./*"],
+      "@shared/*": ["./shared/*"],
+      "@types/*": ["./types/*"]
+    }
+  }
+}

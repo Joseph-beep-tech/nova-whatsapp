@@ -1,0 +1,200 @@
+name: whatsapp-service
+
+services:
+  # MongoDB - State storage for webhook registrations and config
+  mongodb:
+    image: mongo:7-jammy
+    container_name: whatsapp-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=whatsapp-service
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Redis - Event queue and caching (optional, enable with ENABLE_EVENT_QUEUE=true)
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - queue
+
+  # Qdrant - Vector database for RAG (optional, enable with ENABLE_QDRANT=true)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: whatsapp-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - rag
+
+  # WhatsApp API (wwebjs-api) - WhatsApp Web JS session manager
+  wwebjs-api:
+    build:
+      context: ../../vendor/whatsapp-api
+      dockerfile: Dockerfile
+    container_name: wwebjs-api
+    restart: unless-stopped
+    expose:
+      - 3000
+    env_file: .env
+    environment:
+      - API_KEY=${WWEBJS_API_KEY:?WWEBJS_API_KEY is required in .env}
+      - BASE_WEBHOOK_URL=${WWEBJS_BASE_WEBHOOK_URL:-http://whatsapp-service:3001/service/webhook/wwebjs}
+      - ENABLE_WEBHOOK=${WWEBJS_ENABLE_WEBHOOK:-TRUE}
+      - ENABLE_WEBSOCKET=true
+      - RECOVER_SESSIONS=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - wwebjs-sessions:/usr/src/app/sessions
+    networks:
+      - default
+      - dokploy-network
+      - wa-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wwebjs-api.rule=Host(`wa-im.aziziafrica.com`)"
+      - "traefik.http.routers.wwebjs-api.entrypoints=websecure"
+      - "traefik.http.routers.wwebjs-api.tls.certResolver=letsencrypt"
+      - "traefik.http.services.wwebjs-api.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/ping', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # WhatsApp Service - Event processing, tag-based routing, admin UI
+  whatsapp-service:
+    build:
+      context: ../../packages/whatsapp-service
+      dockerfile: Dockerfile
+    container_name: whatsapp-service
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    expose:
+      - 3001
+    env_file: .env
+    environment:
+      # Core configuration
+      - API_KEY=${API_KEY:?API_KEY is required in .env}
+      - NODE_ENV=production
+      - PORT=3001
+      # MongoDB connection — auth optional (set MONGO_PASSWORD to enable)
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/whatsapp-service}
+      # Event Queue (Redis) - set ENABLE_EVENT_QUEUE=true in .env to enable
+      - ENABLE_EVENT_QUEUE=${ENABLE_EVENT_QUEUE:-false}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      # Qdrant RAG - set ENABLE_QDRANT=true in .env to enable
+      - ENABLE_QDRANT=${ENABLE_QDRANT:-false}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-minilm-l6-v2}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
+      # Keycloak OIDC Auth - set ENABLE_KEYCLOAK_AUTH=true in .env to enable
+      - ENABLE_KEYCLOAK_AUTH=${ENABLE_KEYCLOAK_AUTH:-false}
+      - KEYCLOAK_ISSUER_URL=${KEYCLOAK_ISSUER_URL:-}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-whatsapp-service}
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET:-}
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-86400}
+      - SERVICE_BASE_URL=${SERVICE_BASE_URL:-http://localhost:3001}
+      # ERPNext sync - set ENABLE_ERPNEXT_SYNC=true in .env to enable
+      - ENABLE_ERPNEXT_SYNC=${ENABLE_ERPNEXT_SYNC:-false}
+      - ERPNEXT_URL=${ERPNEXT_URL:-}
+      - ERPNEXT_API_KEY=${ERPNEXT_API_KEY:-}
+      - ERPNEXT_API_SECRET=${ERPNEXT_API_SECRET:-}
+      - ERPNEXT_WEBHOOK_SECRET=${ERPNEXT_WEBHOOK_SECRET:-}
+    networks:
+      - default
+      - dokploy-network
+      - wa-network
+      - qdrant-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wa-svc.rule=Host(`wa.dater.world`) && PathPrefix(`/service`)"
+      - "traefik.http.routers.wa-svc.entrypoints=websecure"
+      - "traefik.http.routers.wa-svc.tls.certResolver=letsencrypt"
+      - "traefik.http.services.wa-svc.loadbalancer.server.port=3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/service/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # WhatsApp Dashboard - HITL multi-chat interface
+  whatsapp-dashboard:
+    build:
+      context: ../../packages/whatsapp-dashboard
+      dockerfile: Dockerfile
+    container_name: whatsapp-dashboard
+    restart: unless-stopped
+    depends_on:
+      whatsapp-service:
+        condition: service_healthy
+    expose:
+      - 3002
+    networks:
+      - default
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wa-dashboard.rule=Host(`wa-app.aziziafrica.com`)"
+      - "traefik.http.routers.wa-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.wa-dashboard.tls.certResolver=letsencrypt"
+      - "traefik.http.services.wa-dashboard.loadbalancer.server.port=3002"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/ > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  mongodb-data:
+    driver: local
+  redis-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  wwebjs-sessions:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+  dokploy-network:
+    external: true
+  qdrant-network:
+    name: ai-ops-platform_qdrant_network
+    external: true
+  wa-network:
+    external: true

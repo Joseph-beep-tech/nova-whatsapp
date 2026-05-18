@@ -1,0 +1,110 @@
+[
+  {
+    "id": "027-20260120-multi-session-types",
+    "description": "Multi-session type system (Phase A1)",
+    "type": "feature",
+    "status": "completed",
+    "milestone": "v0.2.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": ["packages/whatsapp-service/src/types/session.ts"],
+      "docs": ["spec/multi-session/01-session-types.md"],
+      "summary": "SessionConfig, SessionState, MultiSessionManager, WhatsAppSession, SessionRecovery types"
+    },
+    "tasks": [
+      "Define SessionConfig and SessionState interfaces",
+      "Define MultiSessionManager and WhatsAppSession interfaces",
+      "Define SessionRecovery types and RecoveryStrategy",
+      "Add API request/response types",
+      "Add SessionEvent types",
+      "Add Joi validation schema in config.ts"
+    ],
+    "verification": ["npm run type-check passes", "No circular dependencies"],
+    "changelog": "Added multi-session type system for session management",
+    "passes": true,
+    "completed_at": "2026-01-XX",
+    "commit": "635f22f"
+  },
+  {
+    "id": "028-20260120-multi-session-core",
+    "description": "Multi-session core classes (Phase A2 Core)",
+    "type": "feature",
+    "status": "completed",
+    "milestone": "v0.2.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/session/MultiSessionManager.ts",
+        "packages/whatsapp-service/src/session/WhatsAppSession.ts",
+        "packages/whatsapp-service/src/session/SessionRecovery.ts"
+      ],
+      "docs": ["spec/multi-session/02-session-core.md"],
+      "summary": "Core session management: manager, session wrapper, recovery logic"
+    },
+    "tasks": [
+      "Implement MultiSessionManager class",
+      "Implement WhatsAppSession wrapper",
+      "Implement SessionRecovery with backoff strategies",
+      "Implement SessionConfig validation"
+    ],
+    "verification": ["Unit tests pass", "Type check passes"],
+    "changelog": "Added multi-session core classes for session management",
+    "passes": true,
+    "completed_at": "2026-01-XX",
+    "commit": "97e0aef"
+  },
+  {
+    "id": "029-20260120-multi-session-api",
+    "description": "Multi-session API layer (Phase A2 API)",
+    "type": "feature",
+    "status": "completed",
+    "milestone": "v0.2.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/api/SessionController.ts",
+        "packages/whatsapp-service/src/api/session.routes.ts"
+      ],
+      "docs": ["spec/multi-session/03-session-api.md"],
+      "summary": "REST API for session CRUD operations"
+    },
+    "tasks": [
+      "Create SessionController with CRUD operations",
+      "Create session validation middleware",
+      "Create session routes (POST, GET, DELETE /session)",
+      "Add QR code and status endpoints"
+    ],
+    "verification": ["API tests pass", "All 9 endpoints functional"],
+    "changelog": "Added multi-session REST API endpoints",
+    "passes": true,
+    "completed_at": "2026-01-XX",
+    "commit": "f3e1663"
+  },
+  {
+    "id": "030-20260120-multi-session-integration",
+    "description": "Multi-session handler integration (Phase A3)",
+    "type": "feature",
+    "status": "completed",
+    "milestone": "v0.2.0",
+    "scope": "packages/whatsapp-service",
+    "context": {
+      "files": [
+        "packages/whatsapp-service/src/bot/handlers/MessageHandler.ts",
+        "packages/whatsapp-service/src/bot/handlers/GroupHandler.ts"
+      ],
+      "docs": ["spec/multi-session/04-handler-integration.md"],
+      "summary": "Add sessionId parameter to handlers for webhook payloads"
+    },
+    "tasks": [
+      "Add sessionId parameter to MessageHandler.handleMessage()",
+      "Add sessionId parameter to GroupHandler methods",
+      "Update handler type definitions",
+      "Add sessionId to webhook payloads (defaults to 'default')"
+    ],
+    "verification": ["Webhook payloads include sessionId", "Backward compatible"],
+    "changelog": "Added session context to message and group handlers",
+    "passes": true,
+    "completed_at": "2026-01-XX",
+    "commit": "bbb3538"
+  }
+]

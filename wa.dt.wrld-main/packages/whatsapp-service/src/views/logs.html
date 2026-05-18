@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logs - WhatsApp n8n Service Admin</title>
+  <link rel="stylesheet" href="/service/admin/styles.css">
+</head>
+<body class="bg-gray-50">
+  <div class="min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div class="flex justify-between items-center">
+          <div>
+            <h1 class="text-2xl font-bold text-gray-900">WhatsApp n8n Service Admin</h1>
+            <p class="text-sm text-gray-500 mt-1">System Logs</p>
+          </div>
+          <div class="flex gap-4">
+            <a href="/admin/sessions" class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">View Sessions</a>
+            <button onclick="clearLogs()" class="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700">
+              Clear
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Controls -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4">
+        <div class="flex justify-between items-center">
+          <div class="flex gap-4">
+            <label class="flex items-center">
+              <input type="checkbox" id="auto-scroll" checked class="rounded border-gray-300 text-blue-600 mr-2">
+              <span class="text-sm text-gray-700">Auto-scroll</span>
+            </label>
+            <label class="flex items-center">
+              <span class="text-sm text-gray-700 mr-2">Filter:</span>
+              <select id="log-level" class="rounded border-gray-300 text-sm">
+                <option value="all">All</option>
+                <option value="error">Errors</option>
+                <option value="warn">Warnings</option>
+                <option value="info">Info</option>
+                <option value="debug">Debug</option>
+              </select>
+            </label>
+          </div>
+          <span id="log-count" class="text-sm text-gray-500">0 entries</span>
+        </div>
+      </div>
+
+      <!-- Logs Container -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div id="logs-container" class="font-mono text-xs p-4 max-h-[600px] overflow-y-auto bg-gray-900 text-gray-100 rounded-lg">
+          <div id="logs-content"></div>
+          <div id="empty-state" class="text-center py-12 text-gray-400">
+            No logs yet...
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const logsContent = document.getElementById('logs-content');
+    const emptyState = document.getElementById('empty-state');
+    const logCount = document.getElementById('log-count');
+    const autoScroll = document.getElementById('auto-scroll');
+    const logLevel = document.getElementById('log-level');
+
+    let logs = [];
+    let filteredLogs = [];
+
+    // Simulate log entries (in production, fetch from server)
+    function addLog(level, message, timestamp = new Date()) {
+      const log = {
+        level,
+        message,
+        timestamp: timestamp.toISOString()
+      };
+      logs.unshift(log); // Add to beginning
+      if (logs.length > 500) logs.pop(); // Keep last 500
+      filterAndRender();
+    }
+
+    function filterAndRender() {
+      const selectedLevel = logLevel.value;
+
+      if (selectedLevel === 'all') {
+        filteredLogs = logs;
+      } else {
+        filteredLogs = logs.filter(log => log.level === selectedLevel);
+      }
+
+      renderLogs();
+    }
+
+    function renderLogs() {
+      if (filteredLogs.length === 0) {
+        logsContent.innerHTML = '';
+        emptyState.classList.remove('hidden');
+      } else {
+        emptyState.classList.add('hidden');
+        logsContent.innerHTML = filteredLogs.map(log => {
+          const color = getLogColor(log.level);
+          const time = new Date(log.timestamp).toLocaleTimeString();
+          return `<div class="py-1 border-b border-gray-800">
+            <span class="text-gray-500">[${time}]</span>
+            <span class="${color} font-semibold">[${log.level.toUpperCase()}]</span>
+            <span class="text-gray-200">${escapeHtml(log.message)}</span>
+          </div>`;
+        }).join('');
+      }
+
+      logCount.textContent = `${filteredLogs.length} entries`;
+
+      if (autoScroll.checked) {
+        logsContent.parentElement.scrollTop = logsContent.parentElement.scrollHeight;
+      }
+    }
+
+    function getLogColor(level) {
+      const colors = {
+        error: 'text-red-400',
+        warn: 'text-yellow-400',
+        info: 'text-blue-400',
+        debug: 'text-gray-400'
+      };
+      return colors[level] || 'text-gray-400';
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function clearLogs() {
+      if (confirm('Clear all logs?')) {
+        logs = [];
+        filteredLogs = [];
+        renderLogs();
+      }
+    }
+
+    // Event listeners
+    logLevel.addEventListener('change', filterAndRender);
+
+    // Simulate some log entries
+    addLog('info', 'WhatsApp n8n Service started on port 3001');
+    addLog('info', 'Connected to whatsapp-api at http://whatsapp-api:3000');
+    addLog('debug', 'Webhook dispatcher initialized with 23 operations');
+
+    // In production, poll for new logs or use WebSocket
+    // setInterval(() => {
+    //   fetch('/admin/api/logs')
+    //     .then(res => res.json())
+    //     .then(data => {
+    //       data.logs.forEach(log => addLog(log.level, log.message, new Date(log.timestamp)));
+    //     });
+    // }, 5000);
+  </script>
+</body>
+</html>
