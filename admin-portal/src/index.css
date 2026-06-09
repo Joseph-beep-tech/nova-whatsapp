@@ -12,7 +12,8 @@
   }
 
   body {
-    @apply bg-surface text-gray-900;
+    background-color: #F8F7F4;
+    @apply text-gray-900;
     font-size: 14px;
     line-height: 1.5;
   }
@@ -73,7 +74,11 @@
   }
   .data-table td { @apply py-3.5 px-4 text-gray-700; }
   .data-table tbody tr {
-    @apply border-b border-surface-border hover:bg-surface transition-colors;
+    @apply border-b border-surface-border transition-colors;
+    background-color: transparent;
+  }
+  .data-table tbody tr:hover {
+    background-color: #F2EFE9;
   }
   .data-table tbody tr:last-child { @apply border-0; }
 
