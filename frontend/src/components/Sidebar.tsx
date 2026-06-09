@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Puzzle,
   Users,
+  Store,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -26,6 +27,7 @@ const menuItems = [
   { icon: Phone, label: 'Call History', href: '/call-history', color: 'slate' },
   { icon: Radio, label: 'Test Call', href: '/test-call', color: 'red' },
   { icon: Zap, label: 'Autopilot', href: '/autopilot', color: 'orange' },
+  { icon: Store, label: 'Restaurants', href: 'http://localhost:5173', color: 'red', external: true },
 ];
 
 export const Sidebar: React.FC = () => {
@@ -45,7 +47,13 @@ export const Sidebar: React.FC = () => {
           return (
             <button
               key={item.href}
-              onClick={() => navigate(item.href)}
+              onClick={() => {
+                if (item.external) {
+                  window.open(item.href, '_blank');
+                } else {
+                  navigate(item.href);
+                }
+              }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                 isActive
                   ? 'bg-primary-600 text-white'
