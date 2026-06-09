@@ -3,7 +3,7 @@ import { authService } from '../services/auth.service';
 import {
   LayoutDashboard, Store, ShoppingCart, CreditCard,
   Navigation, UsersRound, AreaChart, LogOut, Menu as MenuIcon,
-  Shield, MessageSquare,
+  Shield, MessageSquare, CalendarDays, Brain,
 } from 'lucide-react';
 import { useState } from 'react';
 

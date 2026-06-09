@@ -15,6 +15,10 @@ import Riders from './pages/Riders';
 import Analytics from './pages/Analytics';
 import Users from './pages/Users';
 import WhatsApp from './pages/WhatsApp';
+import KnowledgeBase from './pages/KnowledgeBase';
+import AIConfig from './pages/AIConfig';
+import Reservations from './pages/Reservations';
+import AIInteractions from './pages/AIInteractions';
 import Layout from './components/Layout';
 
 const queryClient = new QueryClient({
@@ -39,6 +43,10 @@ function App() {
             <Route path="restaurants/:id" element={<RestaurantOrders />} />
             <Route path="restaurants/:id/details" element={<RestaurantDetail />} />
             <Route path="restaurants/:id/menu" element={<MenuManagement />} />
+            <Route path="restaurants/:id/knowledge" element={<KnowledgeBase />} />
+            <Route path="restaurants/:id/ai-config" element={<AIConfig />} />
+            <Route path="restaurants/:id/reservations" element={<Reservations />} />
+            <Route path="restaurants/:id/ai-interactions" element={<AIInteractions />} />
             <Route path="orders" element={<Orders />} />
             <Route path="tracking" element={<LiveTracking />} />
             <Route path="payments" element={<Payments />} />

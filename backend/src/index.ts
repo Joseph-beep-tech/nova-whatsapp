@@ -15,6 +15,7 @@ import testCallRoutes from './routes/testCall';
 import callHistoryRoutes from './routes/callHistory';
 import whatsappRoutes from './routes/whatsapp';
 import voiceRoutes from './routes/voice';
+import restaurantAIRoutes from './routes/restaurantAI';
 import { whatsappEngine } from './services/whatsappEngine';
 
 dotenv.config();
@@ -41,6 +42,7 @@ app.use('/api/call-history', callHistoryRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 // Public voice webhook namespace (called by OpenAI Realtime / Twilio — no auth)
 app.use('/api/v1/voice', voiceRoutes);
+app.use('/api/restaurant-ai', restaurantAIRoutes);
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {

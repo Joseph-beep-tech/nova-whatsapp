@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { restaurantService } from '../services/restaurant.service';
-import { ArrowLeft, Edit, Save, X, Upload, UtensilsCrossed, ClipboardList } from 'lucide-react';
+import { ArrowLeft, Edit, Save, X, Upload, UtensilsCrossed, ClipboardList, Brain, CalendarDays, MessageSquare, Settings } from 'lucide-react';
 import { useState } from 'react';
 import { Restaurant } from '../types';
 
@@ -126,6 +126,25 @@ export default function RestaurantDetail() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* AI Quick Access */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Knowledge Base', sub: 'Menus, FAQs, Pricing', icon: Brain, path: `/restaurants/${id}/knowledge`, color: 'bg-purple-50 border-purple-200 text-purple-700' },
+          { label: 'AI Config', sub: 'Voice & WhatsApp settings', icon: Settings, path: `/restaurants/${id}/ai-config`, color: 'bg-blue-50 border-blue-200 text-blue-700' },
+          { label: 'Reservations', sub: 'Table bookings', icon: CalendarDays, path: `/restaurants/${id}/reservations`, color: 'bg-green-50 border-green-200 text-green-700' },
+          { label: 'AI Conversations', sub: 'Interaction logs', icon: MessageSquare, path: `/restaurants/${id}/ai-interactions`, color: 'bg-orange-50 border-orange-200 text-orange-700' },
+        ].map((item) => (
+          <button key={item.path} onClick={() => navigate(item.path)}
+            className={`flex items-center gap-3 p-4 rounded-xl border-2 text-left hover:shadow-md transition-all ${item.color}`}>
+            <item.icon size={22} className="shrink-0" />
+            <div>
+              <p className="font-semibold text-sm leading-tight">{item.label}</p>
+              <p className="text-xs opacity-70 mt-0.5">{item.sub}</p>
+            </div>
+          </button>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
