@@ -14,7 +14,11 @@ import OrderPayment from './models/OrderPayment';
 
 dotenv.config();
 
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/novago';
+const MONGO_URI = process.env.MONGODB_URI;
+if (!MONGO_URI) {
+  console.error('❌ MONGODB_URI not set. Add it to your .env file.');
+  process.exit(1);
+}
 
 // ── Seed data ─────────────────────────────────────────────────────────────────
 
@@ -195,7 +199,7 @@ function daysAgo(n: number) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function seed() {
-  await mongoose.connect(MONGO_URI);
+  await mongoose.connect(MONGO_URI!, { serverSelectionTimeoutMS: 10000 });
   console.log('✅ Connected to MongoDB:', MONGO_URI);
 
   // Clear existing data
