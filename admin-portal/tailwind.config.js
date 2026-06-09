@@ -20,21 +20,16 @@ export default {
           800: '#6e5221',
           900: '#52391a',
         },
-        // Deep charcoal sidebar
-        slate: {
-          950: '#0F1117',
-          900: '#161b27',
-          800: '#1e2535',
-          700: '#28334a',
-          600: '#374258',
-        },
-        // Content surface
-        surface: {
-          DEFAULT: '#F8F7F4',
-          card: '#FFFFFF',
-          border: '#E8E4DC',
-          muted: '#F2EFE9',
-        },
+        // Deep charcoal sidebar — FLAT keys so @apply works
+        sidebar: '#0F1117',
+        'sidebar-hover': '#1e2535',
+        'sidebar-active': '#1e2535',
+        'sidebar-border': '#28334a',
+        // Content surfaces — FLAT keys
+        'surface':        '#F8F7F4',
+        'surface-card':   '#FFFFFF',
+        'surface-border': '#E8E4DC',
+        'surface-muted':  '#F2EFE9',
       },
       fontFamily: {
         display: ['"DM Serif Display"', 'Georgia', 'serif'],
@@ -45,10 +40,6 @@ export default {
         card: '0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06)',
         'card-hover': '0 4px 16px 0 rgb(0 0 0 / 0.10), 0 2px 4px -1px rgb(0 0 0 / 0.06)',
         sidebar: '4px 0 24px 0 rgb(0 0 0 / 0.25)',
-      },
-      borderRadius: {
-        xl: '12px',
-        '2xl': '16px',
       },
     },
   },
