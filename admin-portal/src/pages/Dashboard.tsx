@@ -3,23 +3,50 @@ import { restaurantService } from '../services/restaurant.service';
 import { orderService } from '../services/order.service';
 import { riderService } from '../services/rider.service';
 import { paymentService } from '../services/payment.service';
-import { Store, ShoppingCart, DollarSign, TrendingUp, AlertCircle, Users, Clock, Bell } from 'lucide-react';
+import {
+  ShoppingCart, DollarSign, TrendingUp, AlertCircle, Users,
+  Clock, Bell, Store, Bike, ArrowUpRight, ArrowDownRight,
+  CheckCircle2, XCircle, Loader2, Zap, Utensils,
+} from 'lucide-react';
 import { OrderStatus } from '../types';
 import { useMemo, useState, useEffect } from 'react';
 
-function formatStatus(status: OrderStatus): string {
-  const statusMap: Record<OrderStatus, string> = {
-    pending: 'Pending',
-    confirmed: 'Confirmed',
-    preparing: 'Preparing',
-    ready: 'Ready',
-    assigned: 'Assigned',
-    picked_up: 'Picked Up',
-    on_the_way: 'On the Way',
-    delivered: 'Delivered',
-    cancelled: 'Cancelled',
-  };
-  return statusMap[status] || status;
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: 'Pending', confirmed: 'Confirmed', preparing: 'Preparing',
+  ready: 'Ready', assigned: 'Assigned', picked_up: 'Picked Up',
+  on_the_way: 'On the Way', delivered: 'Delivered', cancelled: 'Cancelled',
+};
+
+const STATUS_BAR_COLOR: Partial<Record<OrderStatus, string>> = {
+  delivered: 'bg-emerald-500', cancelled: 'bg-red-400',
+  on_the_way: 'bg-violet-500', preparing: 'bg-orange-400',
+  pending: 'bg-amber-400', confirmed: 'bg-blue-500',
+};
+
+function KPICard({
+  label, value, sub, icon: Icon, iconBg, trend, trendUp,
+}: {
+  label: string; value: string | number; sub?: string;
+  icon: React.ElementType; iconBg: string; trend?: string; trendUp?: boolean;
+}) {
+  return (
+    <div className="card p-5 flex gap-4 items-start hover:shadow-card-hover transition-shadow">
+      <div className={`stat-icon ${iconBg}`}>
+        <Icon size={20} className="text-current" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs text-gray-500 font-medium">{label}</p>
+        <p className="text-2xl font-bold text-gray-900 mt-0.5 leading-tight">{value}</p>
+        {sub && <p className="text-xs text-gray-400 mt-0.5 truncate">{sub}</p>}
+      </div>
+      {trend && (
+        <div className={`flex items-center gap-1 text-xs font-semibold shrink-0 ${trendUp ? 'text-emerald-600' : 'text-red-500'}`}>
+          {trendUp ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+          {trend}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -27,388 +54,242 @@ export default function Dashboard() {
   const { data: orders = [] } = useQuery('orders', orderService.getAll);
   const { data: riders = [] } = useQuery('riders', riderService.getAll);
   const { data: payments = [] } = useQuery('payments', paymentService.getAll);
-  
-  // Auto-refresh every 30 seconds for real-time updates
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [, setTick] = useState(0);
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      setRefreshKey((k) => k + 1);
-    }, 30000);
-    return () => clearInterval(interval);
+    const t = setInterval(() => setTick((k) => k + 1), 30000);
+    return () => clearInterval(t);
   }, []);
 
   const stats = useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const weekAgo = new Date(today.getTime() - 7 * 86400000);
+    const monthAgo = new Date(today.getTime() - 30 * 86400000);
+    const yesterday = new Date(today.getTime() - 86400000);
 
-    const deliveredOrders = orders.filter((o) => o.status === 'delivered');
-    const pendingOrders = orders.filter(
-      (o) => o.status === 'pending' || o.status === 'confirmed' || o.status === 'preparing'
-    );
-    const activeDeliveries = orders.filter(
-      (o) => o.status === 'assigned' || o.status === 'picked_up' || o.status === 'on_the_way'
-    );
-    
-    // Time-based filtering
-    const ordersToday = orders.filter((o) => new Date(o.createdAt) >= today);
-    const ordersThisWeek = orders.filter((o) => new Date(o.createdAt) >= weekAgo);
-    const ordersThisMonth = orders.filter((o) => new Date(o.createdAt) >= monthAgo);
-    
-    const revenueToday = deliveredOrders
-      .filter((o) => new Date(o.createdAt) >= today)
-      .reduce((sum, order) => sum + order.total, 0);
-    const revenueThisWeek = deliveredOrders
-      .filter((o) => new Date(o.createdAt) >= weekAgo)
-      .reduce((sum, order) => sum + order.total, 0);
-    const revenueThisMonth = deliveredOrders
-      .filter((o) => new Date(o.createdAt) >= monthAgo)
-      .reduce((sum, order) => sum + order.total, 0);
-    
-    const totalRevenue = deliveredOrders.reduce((sum, order) => sum + order.total, 0);
-    const avgOrderValue = deliveredOrders.length > 0 ? totalRevenue / deliveredOrders.length : 0;
-    
-    // Online restaurants
-    const onlineRestaurants = restaurants.filter((r) => r.isOpen).length;
-    
-    // Available riders
-    const availableRiders = riders.filter((r) => r.status === 'available').length;
-    
-    // Alerts
-    const delayedOrders = orders.filter((o) => {
-      if (o.status === 'delivered' || o.status === 'cancelled') return false;
-      const orderAge = (now.getTime() - new Date(o.createdAt).getTime()) / (1000 * 60); // minutes
-      return orderAge > 60; // More than 60 minutes old
+    const delivered = orders.filter((o) => o.status === 'delivered');
+    const pending = orders.filter((o) => ['pending','confirmed','preparing'].includes(o.status));
+    const active = orders.filter((o) => ['assigned','picked_up','on_the_way'].includes(o.status));
+
+    const rev = (list: typeof orders) => list.reduce((s, o) => s + o.total, 0);
+    const revenueToday     = rev(delivered.filter((o) => new Date(o.createdAt) >= today));
+    const revenueYesterday = rev(delivered.filter((o) => { const d = new Date(o.createdAt); return d >= yesterday && d < today; }));
+    const revenueWeek      = rev(delivered.filter((o) => new Date(o.createdAt) >= weekAgo));
+    const revenueMonth     = rev(delivered.filter((o) => new Date(o.createdAt) >= monthAgo));
+    const totalRevenue     = rev(delivered);
+
+    const ordersToday     = orders.filter((o) => new Date(o.createdAt) >= today).length;
+    const ordersYesterday = orders.filter((o) => { const d = new Date(o.createdAt); return d >= yesterday && d < today; }).length;
+
+    const delayed = orders.filter((o) => {
+      if (['delivered','cancelled'].includes(o.status)) return false;
+      return (now.getTime() - new Date(o.createdAt).getTime()) / 60000 > 60;
     });
-    
-    const riderShortage = availableRiders < 3 && activeDeliveries.length > availableRiders;
-    
-    const paymentFailures = payments.filter((p) => p.status === 'failed').length;
-    
-    // Revenue by restaurant
-    const revenueByRestaurant = deliveredOrders.reduce((acc, order) => {
-      acc[order.restaurantId] = (acc[order.restaurantId] || 0) + order.total;
+    const availableRiders = riders.filter((r) => r.status === 'available').length;
+    const paymentFails = payments.filter((p) => p.status === 'failed').length;
+
+    const revenueByRestaurant = delivered.reduce((acc, o) => {
+      acc[o.restaurantId] = (acc[o.restaurantId] || 0) + o.total;
       return acc;
     }, {} as Record<string, number>);
-    
     const topRestaurants = Object.entries(revenueByRestaurant)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
-      .map(([id, revenue]) => ({
-        id,
-        name: restaurants.find((r) => r.id === id)?.name || id,
-        revenue,
-      }));
+      .sort(([, a], [, b]) => b - a).slice(0, 6)
+      .map(([id, revenue]) => ({ id, revenue, name: restaurants.find((r) => r.id === id)?.name || id }));
 
-    // Orders by status
-    const ordersByStatus = orders.reduce((acc, order) => {
-      acc[order.status] = (acc[order.status] || 0) + 1;
-      return acc;
+    const byStatus = orders.reduce((acc, o) => {
+      acc[o.status] = (acc[o.status] || 0) + 1; return acc;
     }, {} as Record<OrderStatus, number>);
 
-    // Platform commissions (assuming 20% commission)
-    const platformCommissions = totalRevenue * 0.2;
+    const avgOrder = delivered.length ? totalRevenue / delivered.length : 0;
+    const todayChange = ordersYesterday > 0
+      ? ((ordersToday - ordersYesterday) / ordersYesterday * 100).toFixed(1) + '%'
+      : undefined;
+    const revChange = revenueYesterday > 0
+      ? ((revenueToday - revenueYesterday) / revenueYesterday * 100).toFixed(1) + '%'
+      : undefined;
 
     return {
-      totalRestaurants: restaurants.length,
-      onlineRestaurants,
-      totalOrders: orders.length,
-      ordersToday: ordersToday.length,
-      ordersThisWeek: ordersThisWeek.length,
-      ordersThisMonth: ordersThisMonth.length,
-      totalRevenue,
-      revenueToday,
-      revenueThisWeek,
-      revenueThisMonth,
-      platformCommissions,
-      pendingOrders: pendingOrders.length,
-      activeDeliveries: activeDeliveries.length,
-      deliveredOrders: deliveredOrders.length,
-      cancelledOrders: orders.filter((o) => o.status === 'cancelled').length,
-      avgOrderValue,
-      topRestaurants,
-      ordersByStatus,
-      availableRiders,
-      totalRiders: riders.length,
-      alerts: {
-        delayedOrders: delayedOrders.length,
-        riderShortage,
-        paymentFailures,
-      },
+      ordersToday, ordersWeek: orders.filter((o) => new Date(o.createdAt) >= weekAgo).length,
+      ordersMonth: orders.filter((o) => new Date(o.createdAt) >= monthAgo).length,
+      totalOrders: orders.length, revenueToday, revenueWeek, revenueMonth,
+      totalRevenue, pendingOrders: pending.length, activeDeliveries: active.length,
+      deliveredOrders: delivered.length, cancelledOrders: orders.filter((o) => o.status === 'cancelled').length,
+      avgOrder, topRestaurants, byStatus, availableRiders, totalRiders: riders.length,
+      onlineRestaurants: restaurants.filter((r) => r.isOpen).length,
+      totalRestaurants: restaurants.length, platformCommission: totalRevenue * 0.2,
+      alerts: { delayed: delayed.length, riderShortage: availableRiders < 3 && active.length > availableRiders, paymentFails },
+      todayChange, revChange, revTrendUp: revenueToday >= revenueYesterday, orderTrendUp: ordersToday >= ordersYesterday,
     };
-  }, [orders, restaurants, riders, payments, refreshKey]);
+  }, [orders, restaurants, riders, payments]);
 
-  const recentOrders = useMemo(() => {
-    return [...orders]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 5);
-  }, [orders]);
+  const recentOrders = useMemo(() =>
+    [...orders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 8),
+    [orders]);
 
+  const hasAlerts = stats.alerts.delayed > 0 || stats.alerts.riderShortage || stats.alerts.paymentFails > 0;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-600 mt-1">Welcome back! Here's what's happening.</p>
+    <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Page header */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Overview</h1>
+          <p className="page-subtitle">
+            {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            Live
+          </div>
+        </div>
       </div>
 
       {/* Alerts */}
-      {(stats.alerts.delayedOrders > 0 || stats.alerts.riderShortage || stats.alerts.paymentFailures > 0) && (
-        <div className="card bg-yellow-50 border-yellow-200 border-2">
-          <div className="flex items-center gap-3 mb-4">
-            <Bell className="text-yellow-600" size={20} />
-            <h2 className="text-lg font-semibold text-yellow-900">System Alerts</h2>
+      {hasAlerts && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+          <div className="p-1.5 bg-amber-100 rounded-lg shrink-0 mt-0.5">
+            <Bell size={16} className="text-amber-600" />
           </div>
-          <div className="space-y-2">
-            {stats.alerts.delayedOrders > 0 && (
-              <div className="flex items-center gap-2 text-sm">
-                <AlertCircle className="text-orange-600" size={16} />
-                <span className="text-gray-700">
-                  <strong>{stats.alerts.delayedOrders}</strong> orders delayed (over 60 minutes)
-                </span>
-              </div>
+          <div className="flex-1 space-y-1">
+            <p className="text-sm font-semibold text-amber-900">Attention Required</p>
+            {stats.alerts.delayed > 0 && (
+              <p className="text-xs text-amber-800 flex items-center gap-1.5">
+                <AlertCircle size={12} /> {stats.alerts.delayed} order{stats.alerts.delayed > 1 ? 's' : ''} delayed over 60 minutes
+              </p>
             )}
             {stats.alerts.riderShortage && (
-              <div className="flex items-center gap-2 text-sm">
-                <AlertCircle className="text-red-600" size={16} />
-                <span className="text-gray-700">
-                  <strong>Rider shortage:</strong> {stats.activeDeliveries} active deliveries but only {stats.availableRiders} available riders
-                </span>
-              </div>
+              <p className="text-xs text-amber-800 flex items-center gap-1.5">
+                <AlertCircle size={12} /> Rider shortage — {stats.activeDeliveries} active deliveries, {stats.availableRiders} available
+              </p>
             )}
-            {stats.alerts.paymentFailures > 0 && (
-              <div className="flex items-center gap-2 text-sm">
-                <AlertCircle className="text-red-600" size={16} />
-                <span className="text-gray-700">
-                  <strong>{stats.alerts.paymentFailures}</strong> payment failures require attention
-                </span>
-              </div>
+            {stats.alerts.paymentFails > 0 && (
+              <p className="text-xs text-amber-800 flex items-center gap-1.5">
+                <AlertCircle size={12} /> {stats.alerts.paymentFails} failed payment{stats.alerts.paymentFails > 1 ? 's' : ''} need review
+              </p>
             )}
           </div>
         </div>
       )}
 
-      {/* System-wide Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Total Orders (Today)</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{stats.ordersToday}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                This week: {stats.ordersThisWeek} • This month: {stats.ordersThisMonth}
-              </p>
-            </div>
-            <div className="p-3 bg-blue-100 rounded-lg">
-              <ShoppingCart className="text-blue-600" size={24} />
-            </div>
+      {/* KPI row 1 */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard label="Orders Today" value={stats.ordersToday} sub={`${stats.ordersWeek} this week`}
+          icon={ShoppingCart} iconBg="bg-blue-50 text-blue-600"
+          trend={stats.todayChange} trendUp={stats.orderTrendUp} />
+        <KPICard label="Revenue Today" value={`KSh ${stats.revenueToday.toLocaleString('en-KE', { minimumFractionDigits: 0 })}`}
+          sub={`KSh ${stats.revenueWeek.toLocaleString()} this week`}
+          icon={DollarSign} iconBg="bg-emerald-50 text-emerald-600"
+          trend={stats.revChange} trendUp={stats.revTrendUp} />
+        <KPICard label="Active Deliveries" value={stats.activeDeliveries}
+          sub={`${stats.pendingOrders} pending confirmation`}
+          icon={Bike} iconBg="bg-violet-50 text-violet-600" />
+        <KPICard label="Online Restaurants" value={`${stats.onlineRestaurants}/${stats.totalRestaurants}`}
+          sub={`${stats.availableRiders} riders available`}
+          icon={Store} iconBg="bg-gold-50 text-gold-600" />
+      </div>
+
+      {/* KPI row 2 */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard label="Total Revenue" value={`KSh ${stats.totalRevenue.toLocaleString('en-KE', { minimumFractionDigits: 0 })}`}
+          sub="All time, delivered orders" icon={TrendingUp} iconBg="bg-teal-50 text-teal-600" />
+        <KPICard label="Platform Commission" value={`KSh ${stats.platformCommission.toLocaleString('en-KE', { minimumFractionDigits: 0 })}`}
+          sub="20% of delivered revenue" icon={Zap} iconBg="bg-gold-50 text-gold-600" />
+        <KPICard label="Avg Order Value" value={`KSh ${stats.avgOrder.toLocaleString('en-KE', { maximumFractionDigits: 0 })}`}
+          sub="Per completed order" icon={Utensils} iconBg="bg-orange-50 text-orange-600" />
+        <KPICard label="Completed Orders" value={stats.deliveredOrders}
+          sub={`${stats.cancelledOrders} cancelled`}
+          icon={CheckCircle2} iconBg="bg-emerald-50 text-emerald-600" />
+      </div>
+
+      {/* Mid section: Order pipeline + Top restaurants */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Order pipeline */}
+        <div className="card col-span-1">
+          <p className="section-label">Order Pipeline</p>
+          <div className="space-y-3 mt-1">
+            {(Object.entries(stats.byStatus) as [OrderStatus, number][])
+              .sort(([, a], [, b]) => b - a)
+              .map(([status, count]) => (
+              <div key={status} className="flex items-center gap-3">
+                <span className="text-xs text-gray-600 w-24 shrink-0">{STATUS_LABEL[status]}</span>
+                <div className="flex-1 bg-surface rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${STATUS_BAR_COLOR[status] || 'bg-gray-400'}`}
+                    style={{ width: `${stats.totalOrders ? (count / stats.totalOrders) * 100 : 0}%` }}
+                  />
+                </div>
+                <span className="text-xs font-semibold text-gray-700 w-6 text-right">{count}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Active Deliveries</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{stats.activeDeliveries}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {stats.pendingOrders} pending • {stats.deliveredOrders} delivered
-              </p>
+        {/* Top restaurants */}
+        <div className="card col-span-1 lg:col-span-2">
+          <p className="section-label">Top Restaurants by Revenue</p>
+          {stats.topRestaurants.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">No data yet</p>
+          ) : (
+            <div className="space-y-2 mt-1">
+              {stats.topRestaurants.map((r, i) => {
+                const maxRev = stats.topRestaurants[0].revenue || 1;
+                return (
+                  <div key={r.id} className="flex items-center gap-3">
+                    <span className="text-xs font-mono text-gray-400 w-4 shrink-0">{i + 1}</span>
+                    <span className="text-sm text-gray-800 font-medium flex-1 truncate">{r.name}</span>
+                    <div className="w-24 bg-surface rounded-full h-1.5 hidden sm:block overflow-hidden">
+                      <div className="h-full rounded-full bg-gold-500" style={{ width: `${(r.revenue / maxRev) * 100}%` }} />
+                    </div>
+                    <span className="text-xs font-semibold text-emerald-600 w-28 text-right shrink-0">
+                      KSh {r.revenue.toLocaleString('en-KE', { maximumFractionDigits: 0 })}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-            <div className="p-3 bg-purple-100 rounded-lg">
-              <Clock className="text-purple-600" size={24} />
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Online Restaurants</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{stats.onlineRestaurants}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {stats.totalRestaurants} total restaurants
-              </p>
-            </div>
-            <div className="p-3 bg-primary-100 rounded-lg">
-              <Store className="text-primary-600" size={24} />
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Available Riders</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{stats.availableRiders}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {stats.totalRiders} total riders
-              </p>
-            </div>
-            <div className="p-3 bg-green-100 rounded-lg">
-              <Users className="text-green-600" size={24} />
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {/* Revenue & Commissions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Total Revenue</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">
-                KSh {stats.totalRevenue.toFixed(2)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                Today: KSh {stats.revenueToday.toFixed(2)}
-              </p>
-            </div>
-            <div className="p-3 bg-green-100 rounded-lg">
-              <DollarSign className="text-green-600" size={24} />
-            </div>
-          </div>
+      {/* Recent Orders table */}
+      <div className="card p-0 overflow-hidden">
+        <div className="px-6 py-4 border-b border-surface-border flex items-center justify-between">
+          <p className="section-label mb-0">Recent Orders</p>
+          <a href="/orders" className="text-xs text-gold-600 hover:text-gold-700 font-medium flex items-center gap-1">
+            View all <ArrowUpRight size={12} />
+          </a>
         </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Platform Commissions</p>
-              <p className="text-3xl font-bold text-primary-600 mt-1">
-                KSh {stats.platformCommissions.toFixed(2)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                20% commission rate
-              </p>
-            </div>
-            <div className="p-3 bg-primary-100 rounded-lg">
-              <TrendingUp className="text-primary-600" size={24} />
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Revenue (This Week)</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">
-                KSh {stats.revenueThisWeek.toFixed(2)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {stats.ordersThisWeek} orders
-              </p>
-            </div>
-            <div className="p-3 bg-blue-100 rounded-lg">
-              <TrendingUp className="text-blue-600" size={24} />
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Avg Order Value</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">
-                KSh {stats.avgOrderValue.toFixed(2)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                Per completed order
-              </p>
-            </div>
-            <div className="p-3 bg-indigo-100 rounded-lg">
-              <DollarSign className="text-indigo-600" size={24} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-      {/* Top Restaurants */}
-      {stats.topRestaurants.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="card">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Top Performing Restaurants</h2>
-            <div className="space-y-3">
-              {stats.topRestaurants.map((restaurant, index) => (
-                <div
-                  key={restaurant.id}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold text-sm">
-                      {index + 1}
-                    </div>
-                    <div>
-                      <p className="font-medium">{restaurant.name}</p>
-                      <p className="text-xs text-gray-500">Revenue</p>
-                    </div>
-                  </div>
-                  <p className="font-bold text-green-600">KSh {restaurant.revenue.toFixed(2)}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="card">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Orders by Status</h2>
-            <div className="space-y-3">
-              {Object.entries(stats.ordersByStatus).map(([status, count]) => (
-                <div key={status} className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">{formatStatus(status as OrderStatus)}</span>
-                  <div className="flex items-center gap-3">
-                    <div className="w-32 bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-primary-500 h-2 rounded-full"
-                        style={{
-                          width: `${(count / stats.totalOrders) * 100}%`,
-                        }}
-                      />
-                    </div>
-                    <span className="font-medium w-8 text-right">{count}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Recent Orders */}
-      <div className="card">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Recent Orders</h2>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="data-table">
             <thead>
-              <tr className="border-b">
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Order ID</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Restaurant</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Total</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Status</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Date</th>
+              <tr>
+                <th>Order ID</th>
+                <th>Restaurant</th>
+                <th>Customer</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th>Time</th>
               </tr>
             </thead>
             <tbody>
               {recentOrders.map((order) => (
-                <tr key={order.id} className="border-b hover:bg-gray-50">
-                  <td className="py-3 px-4 text-sm font-mono">{order.id}</td>
-                  <td className="py-3 px-4 text-sm">{order.restaurantId}</td>
-                  <td className="py-3 px-4 text-sm font-medium">KSh {order.total.toFixed(2)}</td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                        order.status === 'delivered'
-                          ? 'bg-green-100 text-green-800'
-                          : order.status === 'cancelled'
-                          ? 'bg-red-100 text-red-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}
-                    >
-                      {formatStatus(order.status)}
+                <tr key={order.id}>
+                  <td><span className="font-mono text-xs text-gray-500">#{order.id.slice(-6).toUpperCase()}</span></td>
+                  <td className="font-medium text-gray-900 max-w-[140px] truncate">
+                    {restaurants.find((r) => r.id === order.restaurantId)?.name || order.restaurantId}
+                  </td>
+                  <td>{order.customerName}</td>
+                  <td className="font-semibold">KSh {order.total.toLocaleString()}</td>
+                  <td>
+                    <span className={`status-${order.status}`}>
+                      {STATUS_LABEL[order.status]}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-sm text-gray-600">
-                    {new Date(order.createdAt).toLocaleDateString()}
+                  <td className="text-gray-400 text-xs">
+                    {new Date(order.createdAt).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
                   </td>
                 </tr>
               ))}
@@ -419,4 +300,3 @@ export default function Dashboard() {
     </div>
   );
 }
-

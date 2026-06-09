@@ -3,478 +3,303 @@ import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
 import { riderService } from '../services/rider.service';
 import { paymentService } from '../services/payment.service';
-import { Search, Filter, Eye, X } from 'lucide-react';
+import { Search, Filter, Eye, X, Package, MapPin, User, Bike, CreditCard, Clock, ChevronDown, CheckCircle2, RefreshCw } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { useEffect, useState } from 'react';
 
-const statusColors: Record<OrderStatus, string> = {
-  pending: 'bg-yellow-100 text-yellow-800',
-  confirmed: 'bg-blue-100 text-blue-800',
-  preparing: 'bg-orange-100 text-orange-800',
-  ready: 'bg-indigo-100 text-indigo-800',
-  assigned: 'bg-cyan-100 text-cyan-800',
-  picked_up: 'bg-purple-100 text-purple-800',
-  on_the_way: 'bg-purple-100 text-purple-800',
-  delivered: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: 'Pending', confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready',
+  assigned: 'Assigned', picked_up: 'Picked Up', on_the_way: 'On the Way',
+  delivered: 'Delivered', cancelled: 'Cancelled',
 };
 
-function formatStatus(status: OrderStatus): string {
-  const statusMap: Record<OrderStatus, string> = {
-    pending: 'Pending',
-    confirmed: 'Confirmed',
-    preparing: 'Preparing',
-    ready: 'Ready',
-    assigned: 'Assigned',
-    picked_up: 'Picked Up',
-    on_the_way: 'On the Way',
-    delivered: 'Delivered',
-    cancelled: 'Cancelled',
-  };
-  return statusMap[status] || status;
-}
+const NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
+  pending: 'confirmed', confirmed: 'preparing', preparing: 'ready',
+  ready: 'assigned', assigned: 'picked_up', picked_up: 'on_the_way',
+  on_the_way: 'delivered',
+};
 
 export default function Orders() {
-  const queryClient = useQueryClient();
-  const [searchQuery, setSearchQuery] = useState('');
+  const qc = useQueryClient();
+  const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'all'>('all');
-  const [restaurantFilter, setRestaurantFilter] = useState<string>('all');
+  const [restaurantFilter, setRestaurantFilter] = useState('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedRiderId, setSelectedRiderId] = useState('');
 
-  const { data: orders = [], isLoading } = useQuery('orders', orderService.getAll);
+  const { data: orders = [], isLoading } = useQuery('orders', orderService.getAll, { refetchInterval: 15000 });
   const { data: restaurants = [] } = useQuery('restaurants', restaurantService.getAll);
   const { data: riders = [] } = useQuery('riders', riderService.getAll);
 
   const updateStatusMutation = useMutation(
-    ({ id, status }: { id: string; status: OrderStatus }) =>
-      orderService.updateStatus(id, status),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('orders');
-      },
-    }
+    ({ id, status }: { id: string; status: OrderStatus }) => orderService.updateStatus(id, status),
+    { onSuccess: () => qc.invalidateQueries('orders') }
   );
-
-  const handleStatusChange = (orderId: string, newStatus: OrderStatus) => {
-    updateStatusMutation.mutate({ id: orderId, status: newStatus });
-  };
-
-  const filteredOrders = orders.filter((order) => {
-    const matchesSearch =
-      order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.restaurantId.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
-    const matchesRestaurant = restaurantFilter === 'all' || order.restaurantId === restaurantFilter;
-    return matchesSearch && matchesStatus && matchesRestaurant;
-  });
-
-  const getRestaurantName = (restaurantId: string) => {
-    const restaurant = restaurants.find((r) => r.id === restaurantId);
-    return restaurant?.name || restaurantId;
-  };
 
   const assignRiderMutation = useMutation(
     ({ orderId, riderId }: { orderId: string; riderId: string }) => orderService.assignRider(orderId, riderId),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries('orders');
-        if (selectedOrder) {
-          queryClient.invalidateQueries(['order-tracking', selectedOrder.id]);
-        }
+        qc.invalidateQueries('orders');
+        if (selectedOrder) qc.invalidateQueries(['order-tracking', selectedOrder.id]);
       },
     }
   );
 
-  const {
-    data: tracking,
-    isFetching: trackingLoading,
-    refetch: refetchTracking,
-  } = useQuery(
+  const { data: tracking, refetch: refetchTracking } = useQuery(
     ['order-tracking', selectedOrder?.id],
     () => orderService.getTracking(selectedOrder!.id),
     { enabled: !!selectedOrder }
   );
 
-  const {
-    data: payment,
-    isFetching: paymentLoading,
-    refetch: refetchPayment,
-  } = useQuery(
+  const { data: payment, refetch: refetchPayment } = useQuery(
     ['payment', selectedOrder?.id],
     () => paymentService.getByOrder(selectedOrder!.id),
     { enabled: !!selectedOrder }
   );
 
   useEffect(() => {
-    if (selectedOrder) {
-      setSelectedRiderId(selectedOrder.driverId ?? '');
-    } else {
-      setSelectedRiderId('');
-    }
+    if (selectedOrder) setSelectedRiderId(selectedOrder.driverId ?? '');
+    else setSelectedRiderId('');
   }, [selectedOrder]);
 
-  const availableRiders = riders.filter(
-    (r) => r.status === 'available' || r.id === selectedOrder?.driverId
-  );
+  const availableRiders = riders.filter((r) => r.status === 'available' || r.id === selectedOrder?.driverId);
 
-  if (isLoading) {
-    return <div className="text-center py-12">Loading orders...</div>;
-  }
+  const filtered = orders.filter((o) => {
+    const q = search.toLowerCase();
+    const matchSearch = !q || o.id.toLowerCase().includes(q) || o.customerName.toLowerCase().includes(q);
+    const matchStatus = statusFilter === 'all' || o.status === statusFilter;
+    const matchRest = restaurantFilter === 'all' || o.restaurantId === restaurantFilter;
+    return matchSearch && matchStatus && matchRest;
+  });
 
-  const totalRevenue = filteredOrders
-    .filter((o) => o.status === 'delivered')
-    .reduce((sum, order) => sum + order.total, 0);
+  const totalRevenue = filtered.filter((o) => o.status === 'delivered').reduce((s, o) => s + o.total, 0);
+  const getRestName = (id: string) => restaurants.find((r) => r.id === id)?.name || id;
+
+  const STATUS_TABS: { value: OrderStatus | 'all'; label: string; count: number }[] = [
+    { value: 'all', label: 'All', count: orders.length },
+    { value: 'pending', label: 'Pending', count: orders.filter((o) => o.status === 'pending').length },
+    { value: 'preparing', label: 'Preparing', count: orders.filter((o) => o.status === 'preparing').length },
+    { value: 'on_the_way', label: 'On the Way', count: orders.filter((o) => o.status === 'on_the_way').length },
+    { value: 'delivered', label: 'Delivered', count: orders.filter((o) => o.status === 'delivered').length },
+    { value: 'cancelled', label: 'Cancelled', count: orders.filter((o) => o.status === 'cancelled').length },
+  ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="page-header">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Orders</h1>
-          <p className="text-gray-600 mt-1">Manage and track all orders</p>
+          <h1 className="page-title">Orders</h1>
+          <p className="page-subtitle">{orders.length} total · KSh {totalRevenue.toLocaleString('en-KE', { maximumFractionDigits: 0 })} revenue</p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-sm text-gray-600">Total Revenue</p>
-            <p className="text-2xl font-bold text-green-600">KSh {totalRevenue.toFixed(2)}</p>
+        <div className="flex items-center gap-2">
+          <select value={restaurantFilter} onChange={(e) => setRestaurantFilter(e.target.value)} className="input-field w-auto text-sm">
+            <option value="all">All Restaurants</option>
+            {restaurants.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Status tabs */}
+      <div className="flex gap-1 bg-surface-muted p-1 rounded-xl w-fit flex-wrap">
+        {STATUS_TABS.map((tab) => (
+          <button key={tab.value} onClick={() => setStatusFilter(tab.value)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${statusFilter === tab.value ? 'bg-white shadow-card text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+            {tab.label}
+            {tab.count > 0 && <span className="ml-1.5 text-gray-400">{tab.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input className="input-field pl-9 max-w-sm" placeholder="Search by ID or customer…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+
+      {/* Table */}
+      <div className="card p-0 overflow-hidden">
+        {isLoading ? (
+          <div className="py-16 text-center text-gray-400 text-sm">Loading orders…</div>
+        ) : filtered.length === 0 ? (
+          <div className="py-16 text-center">
+            <Package size={40} className="mx-auto text-gray-300 mb-2" />
+            <p className="text-gray-500 text-sm font-medium">No orders found</p>
           </div>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="card space-y-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder="Search orders by ID, customer name, or restaurant..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="input-field pl-10"
-          />
-        </div>
-        <div className="flex flex-wrap gap-4">
-          <div className="flex items-center gap-2">
-            <Filter size={18} className="text-gray-500" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as OrderStatus | 'all')}
-              className="input-field w-auto min-w-[150px]"
-            >
-              <option value="all">All Statuses</option>
-              <option value="pending">Pending</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="preparing">Preparing</option>
-              <option value="ready">Ready</option>
-              <option value="picked_up">Picked Up</option>
-              <option value="on_the_way">On the Way</option>
-              <option value="delivered">Delivered</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Restaurant</th>
+                  <th>Customer</th>
+                  <th>Items</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th>Time</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((order) => {
+                  const next = NEXT_STATUS[order.status];
+                  return (
+                    <tr key={order.id}>
+                      <td><span className="font-mono text-xs text-gray-500">#{order.id.slice(-6).toUpperCase()}</span></td>
+                      <td className="font-medium text-gray-900 max-w-[140px]"><span className="truncate block">{getRestName(order.restaurantId)}</span></td>
+                      <td className="text-gray-700">{order.customerName}</td>
+                      <td className="text-gray-500">{order.items.length} item{order.items.length !== 1 ? 's' : ''}</td>
+                      <td className="font-semibold text-gray-900">KSh {order.total.toLocaleString()}</td>
+                      <td><span className={`status-${order.status}`}>{STATUS_LABEL[order.status]}</span></td>
+                      <td className="text-gray-400 text-xs">{new Date(order.createdAt).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td>
+                        <div className="flex items-center gap-1">
+                          {next && (
+                            <button onClick={() => updateStatusMutation.mutate({ id: order.id, status: next })}
+                              className="text-xs px-2.5 py-1 bg-slate-900 text-white rounded-lg hover:bg-gold-500 transition-colors font-medium">
+                              → {STATUS_LABEL[next]}
+                            </button>
+                          )}
+                          <button onClick={() => setSelectedOrder(order)} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-surface rounded-lg">
+                            <Eye size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={restaurantFilter}
-              onChange={(e) => setRestaurantFilter(e.target.value)}
-              className="input-field w-auto min-w-[200px]"
-            >
-              <option value="all">All Restaurants</option>
-              {restaurants.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="card">
-          <p className="text-sm text-gray-600">Total Orders</p>
-          <p className="text-2xl font-bold">{filteredOrders.length}</p>
-        </div>
-        <div className="card">
-          <p className="text-sm text-gray-600">Pending</p>
-          <p className="text-2xl font-bold text-yellow-600">
-            {filteredOrders.filter((o) => o.status === 'pending' || o.status === 'confirmed').length}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-sm text-gray-600">Delivered</p>
-          <p className="text-2xl font-bold text-green-600">
-            {filteredOrders.filter((o) => o.status === 'delivered').length}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-sm text-gray-600">Cancelled</p>
-          <p className="text-2xl font-bold text-red-600">
-            {filteredOrders.filter((o) => o.status === 'cancelled').length}
-          </p>
-        </div>
-      </div>
-
-      <div className="card overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Order ID</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Restaurant</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Items</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Total</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Status</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Date</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredOrders.map((order) => (
-              <tr key={order.id} className="border-b hover:bg-gray-50">
-                <td className="py-3 px-4 text-sm font-mono">{order.id}</td>
-                <td className="py-3 px-4 text-sm">{getRestaurantName(order.restaurantId)}</td>
-                <td className="py-3 px-4 text-sm">
-                  {order.items.length} item{order.items.length !== 1 ? 's' : ''}
-                </td>
-                <td className="py-3 px-4 text-sm font-medium">KSh {order.total.toFixed(2)}</td>
-                <td className="py-3 px-4">
-                  <span
-                    className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                      statusColors[order.status]
-                    }`}
-                  >
-                    {formatStatus(order.status)}
-                  </span>
-                </td>
-                <td className="py-3 px-4 text-sm text-gray-600">
-                  {new Date(order.createdAt).toLocaleString()}
-                </td>
-                <td className="py-3 px-4">
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={order.status}
-                      onChange={(e) => handleStatusChange(order.id, e.target.value as OrderStatus)}
-                      className="text-sm border border-gray-300 rounded px-2 py-1 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="confirmed">Confirmed</option>
-                      <option value="preparing">Preparing</option>
-                      <option value="ready">Ready</option>
-                      <option value="assigned">Assigned</option>
-                      <option value="picked_up">Picked Up</option>
-                      <option value="on_the_way">On the Way</option>
-                      <option value="delivered">Delivered</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                    <button
-                      onClick={() => setSelectedOrder(order)}
-                      className="p-1 text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded transition-colors"
-                      title="View Details"
-                    >
-                      <Eye size={16} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {filteredOrders.length === 0 && orders.length > 0 && (
-        <div className="text-center py-12 text-gray-500">
-          No orders match your filter criteria.
-        </div>
-      )}
-
-      {orders.length === 0 && (
-        <div className="text-center py-12 text-gray-500">
-          No orders found.
-        </div>
-      )}
-
-      {/* Order Details Modal */}
+      {/* Order detail modal */}
       {selectedOrder && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b flex items-center justify-between sticky top-0 bg-white">
-              <h2 className="text-2xl font-bold">Order Details</h2>
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <X size={20} />
-              </button>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setSelectedOrder(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto shadow-2xl fade-in" onClick={(e) => e.stopPropagation()}>
+            {/* Modal header */}
+            <div className="sticky top-0 bg-white z-10 border-b border-surface-border px-6 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="font-display text-xl text-gray-900">Order #{selectedOrder.id.slice(-6).toUpperCase()}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{new Date(selectedOrder.createdAt).toLocaleString('en-KE')}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`status-${selectedOrder.status}`}>{STATUS_LABEL[selectedOrder.status]}</span>
+                <button onClick={() => setSelectedOrder(null)} className="p-2 hover:bg-surface rounded-lg ml-2"><X size={18} /></button>
+              </div>
             </div>
 
             <div className="p-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Payment</p>
-                  {payment ? (
-                    <>
-                      <p className="text-sm font-semibold mt-1">KSh {payment.amount.toFixed(2)}</p>
-                      <p className="text-xs text-gray-500 uppercase">{payment.method}</p>
-                      <span
-                        className={`inline-flex px-2 py-1 text-xs font-medium rounded-full mt-2 ${
-                          payment.status === 'completed'
-                            ? 'bg-green-100 text-green-800'
-                            : payment.status === 'pending'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : payment.status === 'failed'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-purple-100 text-purple-800'
-                        }`}
-                      >
-                        {payment.status}
-                      </span>
-                    </>
-                  ) : (
-                    <p className="text-xs text-gray-500">
-                      {paymentLoading ? 'Loading payment...' : 'No payment record'}
-                    </p>
-                  )}
+              {/* Grid info */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Restaurant', value: getRestName(selectedOrder.restaurantId), icon: Package },
+                  { label: 'Customer', value: selectedOrder.customerName, icon: User },
+                  { label: 'Delivery Address', value: selectedOrder.deliveryAddress, icon: MapPin },
+                  { label: 'Rider', value: selectedOrder.driverId || 'Unassigned', icon: Bike },
+                ].map((f) => (
+                  <div key={f.label} className="bg-surface-muted rounded-xl p-3 flex items-start gap-2.5">
+                    <f.icon size={14} className="text-gray-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-400">{f.label}</p>
+                      <p className="text-sm font-medium text-gray-900 truncate">{f.value}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Assign rider */}
+              <div className="bg-surface-muted rounded-xl p-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Assign Rider</p>
+                <div className="flex gap-2">
+                  <select value={selectedRiderId} onChange={(e) => setSelectedRiderId(e.target.value)} className="input-field flex-1 text-sm">
+                    <option value="">Select a rider…</option>
+                    {availableRiders.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.status})</option>)}
+                  </select>
+                  <button onClick={() => selectedRiderId && assignRiderMutation.mutate({ orderId: selectedOrder.id, riderId: selectedRiderId })}
+                    disabled={!selectedRiderId || assignRiderMutation.isLoading} className="btn-primary">
+                    {assignRiderMutation.isLoading ? <RefreshCw size={14} className="animate-spin" /> : 'Assign'}
+                  </button>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Rider</p>
-                  <p className="text-sm font-semibold mt-1">
-                    {selectedOrder.driverId ? selectedOrder.driverId : 'Unassigned'}
-                  </p>
-                  <div className="flex items-center gap-2 mt-3">
-                    <select
-                      value={selectedRiderId}
-                      onChange={(e) => setSelectedRiderId(e.target.value)}
-                      className="flex-1 input-field text-sm"
-                    >
-                      <option value="">Select rider</option>
-                      {availableRiders.map((rider) => (
-                        <option key={rider.id} value={rider.id}>
-                          {rider.name} {rider.status === 'available' ? '' : `( ${rider.status} )`}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() =>
-                        selectedRiderId &&
-                        assignRiderMutation.mutate({ orderId: selectedOrder.id, riderId: selectedRiderId })
-                      }
-                      disabled={!selectedRiderId || assignRiderMutation.isLoading}
-                      className="btn-primary text-xs"
-                    >
-                      Assign
-                    </button>
+              </div>
+
+              {/* Order items */}
+              <div>
+                <p className="section-label">Order Items</p>
+                <div className="space-y-2">
+                  {selectedOrder.items.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between py-2.5 border-b border-surface-border last:border-0">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{item.name}</p>
+                        <p className="text-xs text-gray-400">{item.quantity} × KSh {item.price.toLocaleString()}</p>
+                      </div>
+                      <p className="text-sm font-semibold text-gray-900">KSh {(item.price * item.quantity).toLocaleString()}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-1.5 mt-4 pt-4 border-t border-surface-border">
+                  {[['Subtotal', selectedOrder.subtotal], ['Delivery Fee', selectedOrder.deliveryFee], ['Tax', selectedOrder.tax]].map(([l, v]) => (
+                    <div key={l as string} className="flex justify-between text-sm">
+                      <span className="text-gray-500">{l}</span>
+                      <span>KSh {(v as number).toLocaleString()}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-bold text-base pt-2 border-t border-surface-border mt-2">
+                    <span>Total</span>
+                    <span className="text-gold-600">KSh {selectedOrder.total.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">Order ID</p>
-                  <p className="font-mono font-medium">{selectedOrder.id}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Status</p>
-                  <span
-                    className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                      statusColors[selectedOrder.status]
-                    }`}
-                  >
-                    {formatStatus(selectedOrder.status)}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Restaurant</p>
-                  <p className="font-medium">{getRestaurantName(selectedOrder.restaurantId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Customer</p>
-                  <p className="font-medium">{selectedOrder.customerName}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Order Date</p>
-                  <p className="font-medium">
-                    {new Date(selectedOrder.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Delivery Address</p>
-                  <p className="font-medium">{selectedOrder.deliveryAddress}</p>
-                </div>
-              </div>
-
-              <div className="border-t pt-4">
-                <h3 className="font-semibold mb-3">Order Items</h3>
-                <div className="space-y-2">
-                  {selectedOrder.items.map((item, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                    >
-                      <div>
-                        <p className="font-medium">{item.name}</p>
-                        <p className="text-sm text-gray-600">
-                          Quantity: {item.quantity} × KSh {item.price.toFixed(2)}
-                        </p>
-                      </div>
-                      <p className="font-bold">KSh {(item.price * item.quantity).toFixed(2)}</p>
+              {/* Payment */}
+              {payment && (
+                <div className="bg-surface-muted rounded-xl p-4">
+                  <p className="section-label">Payment</p>
+                  <div className="flex items-center gap-4">
+                    <CreditCard size={18} className="text-gray-400" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium capitalize">{payment.method} · KSh {payment.amount.toLocaleString()}</p>
                     </div>
-                  ))}
+                    <span className={`badge ${payment.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : payment.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
+                      {payment.status}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div className="border-t pt-4 space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Subtotal</span>
-                  <span className="font-medium">KSh {selectedOrder.subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Delivery Fee</span>
-                  <span className="font-medium">KSh {selectedOrder.deliveryFee.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Tax</span>
-                  <span className="font-medium">KSh {selectedOrder.tax.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold pt-2 border-t">
-                  <span>Total</span>
-                  <span className="text-primary-500">KSh {selectedOrder.total.toFixed(2)}</span>
-                </div>
-              </div>
-
-              <div className="border-t pt-4">
+              {/* Timeline */}
+              <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">Tracking Timeline</h3>
-                  <button
-                    onClick={() => {
-                      refetchTracking();
-                      refetchPayment();
-                    }}
-                    className="text-xs text-primary-600 hover:underline"
-                    disabled={trackingLoading}
-                  >
-                    Refresh
-                  </button>
+                  <p className="section-label mb-0">Timeline</p>
+                  <button onClick={() => { refetchTracking(); refetchPayment(); }} className="text-xs text-gold-600 hover:text-gold-700 font-medium">Refresh</button>
                 </div>
                 <div className="space-y-3">
-                  {(tracking?.steps || selectedOrder.statusHistory || []).map((step) => (
-                    <div key={step.id} className="flex items-start gap-3">
-                      <div className="mt-1">
-                        <span className="w-2 h-2 rounded-full bg-primary-500 inline-block" />
+                  {(tracking?.steps || selectedOrder.statusHistory || []).map((step: any, i: number) => (
+                    <div key={step.id || i} className="flex items-start gap-3">
+                      <div className="mt-1 shrink-0">
+                        <div className="w-2 h-2 rounded-full bg-gold-500" />
                       </div>
                       <div>
-                        <p className="text-sm font-medium capitalize">{step.status.replace('_', ' ')}</p>
-                        <p className="text-xs text-gray-500">
-                          {new Date(step.timestamp).toLocaleString()}
-                        </p>
-                        <p className="text-xs text-gray-600 mt-1">{step.message}</p>
+                        <p className="text-sm font-medium text-gray-900 capitalize">{step.status.replace('_', ' ')}</p>
+                        <p className="text-xs text-gray-400">{new Date(step.timestamp).toLocaleString('en-KE')}</p>
+                        {step.message && <p className="text-xs text-gray-600 mt-0.5">{step.message}</p>}
                       </div>
                     </div>
                   ))}
-                  {!tracking && !selectedOrder.statusHistory && (
-                    <p className="text-sm text-gray-500">No tracking data available.</p>
-                  )}
                 </div>
+              </div>
+
+              {/* Status change */}
+              <div className="flex gap-2 pt-2 border-t border-surface-border">
+                <select value={selectedOrder.status}
+                  onChange={(e) => updateStatusMutation.mutate({ id: selectedOrder.id, status: e.target.value as OrderStatus })}
+                  className="input-field flex-1 text-sm">
+                  {(Object.keys(STATUS_LABEL) as OrderStatus[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+                </select>
+                <button onClick={() => setSelectedOrder(null)} className="btn-secondary">Close</button>
               </div>
             </div>
           </div>
@@ -483,4 +308,3 @@ export default function Orders() {
     </div>
   );
 }
-

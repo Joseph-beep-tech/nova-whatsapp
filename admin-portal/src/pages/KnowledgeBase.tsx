@@ -121,14 +121,14 @@ export default function KnowledgeBase() {
   const totalChunks = docs.reduce((s, d) => s + (d.chunks?.length || 0), 0);
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-4">
         <button onClick={() => navigate(`/restaurants/${restaurantId}/details`)} className="p-2 hover:bg-gray-100 rounded-lg">
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">{restaurant?.name} — AI Knowledge Base</h1>
+          <h1 className="page-title">{restaurant?.name} — AI Knowledge Base</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             Upload menus, FAQs, locations and pricing. The AI uses this to answer customers via WhatsApp and voice calls.
           </p>
@@ -156,7 +156,7 @@ export default function KnowledgeBase() {
           <div key={s.label} className="card flex items-center gap-4">
             <div className={`p-3 rounded-xl ${s.color}`}><s.icon size={22} /></div>
             <div>
-              <p className="text-2xl font-bold text-gray-900">{s.value}</p>
+              <p className="page-title">{s.value}</p>
               <p className="text-xs text-gray-500">{s.label}</p>
               <p className="text-xs text-gray-400">{s.sub}</p>
             </div>

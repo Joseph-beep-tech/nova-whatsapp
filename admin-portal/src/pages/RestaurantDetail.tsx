@@ -1,346 +1,263 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { restaurantService } from '../services/restaurant.service';
-import { ArrowLeft, Edit, Save, X, Upload, UtensilsCrossed, ClipboardList, Brain, CalendarDays, MessageSquare, Settings } from 'lucide-react';
+import {
+  ArrowLeft, Edit, Save, X, Upload, Star, Clock, MapPin,
+  Brain, CalendarDays, MessageSquare, Settings, Mic,
+  UtensilsCrossed, Wifi, WifiOff, Phone, RefreshCw,
+  ClipboardList, DollarSign,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Restaurant } from '../types';
+
+const AI_MODULES = [
+  { label: 'Knowledge Base',    sub: 'Menus, FAQs, pricing',  icon: Brain,        path: 'knowledge',        color: 'text-purple-600 bg-purple-50' },
+  { label: 'AI Config',         sub: 'Voice & WA settings',   icon: Settings,     path: 'ai-config',        color: 'text-blue-600 bg-blue-50' },
+  { label: 'Reservations',      sub: 'Table bookings',        icon: CalendarDays, path: 'reservations',     color: 'text-emerald-600 bg-emerald-50' },
+  { label: 'AI Conversations',  sub: 'Interaction logs',      icon: MessageSquare,path: 'ai-interactions',  color: 'text-orange-600 bg-orange-50' },
+  { label: 'Menu Management',   sub: 'Items & categories',    icon: UtensilsCrossed, path: 'menu',          color: 'text-gold-600 bg-gold-50' },
+  { label: 'Orders',            sub: 'Restaurant orders',     icon: ClipboardList, path: '',               color: 'text-slate-600 bg-slate-50' },
+];
+
+function FieldRow({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-surface-border last:border-0">
+      <span className="text-sm text-gray-500">{label}</span>
+      <span className="text-sm font-medium text-gray-900 text-right max-w-[60%] truncate">{value}</span>
+    </div>
+  );
+}
 
 export default function RestaurantDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<Partial<Restaurant>>({});
+  const [form, setForm] = useState<Partial<Restaurant>>({});
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   const { data: restaurant, isLoading } = useQuery(
     ['restaurant', id],
     () => restaurantService.getById(id!),
-    {
-      enabled: !!id,
-      onSuccess: (data) => {
-        setFormData(data);
-      },
-    }
+    { enabled: !!id, onSuccess: (d) => setForm(d) }
   );
 
   const updateMutation = useMutation(
     (data: FormData) => restaurantService.update(id!, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['restaurant', id]);
-        setIsEditing(false);
-      },
-    }
+    { onSuccess: () => { qc.invalidateQueries(['restaurant', id]); setIsEditing(false); } }
   );
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setImage(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+    setImage(file);
+    const reader = new FileReader();
+    reader.onloadend = () => setImagePreview(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const formDataObj = new FormData();
-    
-    Object.entries(formData).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        if (key === 'features' && Array.isArray(value)) {
-          formDataObj.append(key, JSON.stringify(value));
-        } else if (key !== 'imageUrl' && key !== 'id') {
-          formDataObj.append(key, value.toString());
-        }
+  const handleSubmit = () => {
+    const fd = new FormData();
+    Object.entries(form).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && k !== 'id' && k !== 'imageUrl') {
+        fd.append(k, k === 'features' && Array.isArray(v) ? JSON.stringify(v) : String(v));
       }
     });
-
-    if (image) {
-      formDataObj.append('image', image);
-    }
-
-    updateMutation.mutate(formDataObj);
+    if (image) fd.append('image', image);
+    updateMutation.mutate(fd);
   };
 
-  if (isLoading) {
-    return <div className="text-center py-12">Loading...</div>;
-  }
+  if (isLoading) return (
+    <div className="space-y-4 max-w-5xl mx-auto">
+      <div className="skeleton h-8 w-48 rounded-xl" />
+      <div className="skeleton h-48 rounded-2xl" />
+      <div className="grid grid-cols-3 gap-4">{[...Array(3)].map((_, i) => <div key={i} className="skeleton h-24 rounded-2xl" />)}</div>
+    </div>
+  );
 
-  if (!restaurant) {
-    return <div className="text-center py-12">Restaurant not found</div>;
-  }
+  if (!restaurant) return <div className="text-center py-20 text-gray-400">Restaurant not found</div>;
+
+  const imgSrc = imagePreview || `http://localhost:4000${restaurant.imageUrl}`;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Header */}
       <div className="flex items-center gap-4">
-        <button
-          onClick={() => navigate('/restaurants')}
-          className="p-2 hover:bg-gray-100 rounded-lg"
-        >
-          <ArrowLeft size={20} />
+        <button onClick={() => navigate('/restaurants')} className="p-2 hover:bg-surface-muted rounded-xl transition-colors">
+          <ArrowLeft size={18} className="text-gray-600" />
         </button>
-        <div className="flex-1">
-          <h1 className="text-3xl font-bold text-gray-900">{restaurant.name}</h1>
-          <p className="text-gray-600 mt-1">{restaurant.cuisine}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="page-title truncate">{restaurant.name}</h1>
+          <p className="page-subtitle">{restaurant.cuisine} · {restaurant.address}</p>
         </div>
-        <button
-          onClick={() => navigate(`/restaurants/${id}`)}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <ClipboardList size={16} />
-          Orders
-        </button>
-        <button
-          onClick={() => navigate(`/restaurants/${id}/menu`)}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <UtensilsCrossed size={16} />
-          Manage Menu
-        </button>
-        {!isEditing ? (
-          <button onClick={() => setIsEditing(true)} className="btn-primary flex items-center gap-2">
-            <Edit size={16} />
-            Edit
-          </button>
-        ) : (
-          <div className="flex gap-2">
-            <button onClick={handleSubmit} className="btn-primary flex items-center gap-2">
-              <Save size={16} />
-              Save
+        <div className="flex gap-2">
+          {isEditing ? (
+            <>
+              <button onClick={handleSubmit} disabled={updateMutation.isLoading} className="btn-primary">
+                {updateMutation.isLoading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                Save
+              </button>
+              <button onClick={() => { setIsEditing(false); setForm(restaurant); setImagePreview(null); }} className="btn-secondary">
+                <X size={14} /> Cancel
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setIsEditing(true)} className="btn-secondary">
+              <Edit size={14} /> Edit
             </button>
-            <button
-              onClick={() => {
-                setIsEditing(false);
-                setFormData(restaurant);
-              }}
-              className="btn-secondary flex items-center gap-2"
-            >
-              <X size={16} />
-              Cancel
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* AI Quick Access */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { label: 'Knowledge Base', sub: 'Menus, FAQs, Pricing', icon: Brain, path: `/restaurants/${id}/knowledge`, color: 'bg-purple-50 border-purple-200 text-purple-700' },
-          { label: 'AI Config', sub: 'Voice & WhatsApp settings', icon: Settings, path: `/restaurants/${id}/ai-config`, color: 'bg-blue-50 border-blue-200 text-blue-700' },
-          { label: 'Reservations', sub: 'Table bookings', icon: CalendarDays, path: `/restaurants/${id}/reservations`, color: 'bg-green-50 border-green-200 text-green-700' },
-          { label: 'AI Conversations', sub: 'Interaction logs', icon: MessageSquare, path: `/restaurants/${id}/ai-interactions`, color: 'bg-orange-50 border-orange-200 text-orange-700' },
-        ].map((item) => (
-          <button key={item.path} onClick={() => navigate(item.path)}
-            className={`flex items-center gap-3 p-4 rounded-xl border-2 text-left hover:shadow-md transition-all ${item.color}`}>
-            <item.icon size={22} className="shrink-0" />
+      {/* Hero image + quick stats */}
+      <div className="card p-0 overflow-hidden">
+        <div className="relative h-52">
+          <img src={imgSrc} alt={restaurant.name} className="w-full h-full object-cover"
+            onError={(e) => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(restaurant.name)}&size=800&background=C9A84C&color=fff&bold=true`; }} />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+          <div className={`absolute top-4 left-4 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold backdrop-blur-sm ${restaurant.isOpen ? 'bg-emerald-500/90 text-white' : 'bg-black/50 text-white/70'}`}>
+            {restaurant.isOpen ? <Wifi size={11} /> : <WifiOff size={11} />}
+            {restaurant.isOpen ? 'Open Now' : 'Closed'}
+          </div>
+          {isEditing && (
+            <label className="absolute bottom-4 right-4 btn-primary text-xs cursor-pointer">
+              <Upload size={13} /> Change Image
+              <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+            </label>
+          )}
+          {/* bottom stats */}
+          <div className="absolute bottom-4 left-4 flex gap-4">
+            {[
+              { icon: Star, value: restaurant.rating.toFixed(1), cls: 'text-gold-400 fill-gold-400' },
+              { icon: Clock, value: `${restaurant.deliveryTimeMinutesMin}–${restaurant.deliveryTimeMinutesMax} min`, cls: '' },
+            ].map((s, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-white text-sm font-medium">
+                <s.icon size={14} className={s.cls || 'text-white/80'} />
+                {s.value}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick info row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-surface-border border-t border-surface-border">
+          {[
+            { label: 'Delivery Fee', value: `KSh ${restaurant.deliveryFee}`, icon: DollarSign },
+            { label: 'Min Order', value: `KSh ${restaurant.minOrder || 0}`, icon: UtensilsCrossed },
+            { label: 'Phone', value: restaurant.phone || 'N/A', icon: Phone },
+            { label: 'Hours', value: restaurant.hours || 'Set hours', icon: Clock },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-3 p-4">
+              <item.icon size={16} className="text-gray-400 shrink-0" />
+              <div>
+                <p className="text-xs text-gray-400">{item.label}</p>
+                <p className="text-sm font-semibold text-gray-900 truncate">{item.value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* AI Modules */}
+      <div>
+        <p className="section-label">AI & Management</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {AI_MODULES.map((m) => (
+            <button key={m.path} onClick={() => navigate(m.path ? `/restaurants/${id}/${m.path}` : `/restaurants/${id}`)}
+              className="card-sm flex items-center gap-3 text-left hover:shadow-card-hover hover:border-gray-300 transition-all group">
+              <div className={`p-2.5 rounded-xl ${m.color} transition-transform group-hover:scale-105 shrink-0`}>
+                <m.icon size={18} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-900 leading-tight">{m.label}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{m.sub}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Edit form or info display */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Main fields */}
+        <div className="lg:col-span-3 card">
+          <p className="section-label">Restaurant Information</p>
+          {isEditing ? (
+            <div className="space-y-4">
+              {[
+                { label: 'Name', key: 'name', type: 'text' },
+                { label: 'Cuisine', key: 'cuisine', type: 'text' },
+                { label: 'Address', key: 'address', type: 'text' },
+                { label: 'Phone', key: 'phone', type: 'tel' },
+                { label: 'Opening Hours', key: 'hours', type: 'text', placeholder: 'Mon-Sun 10am–10pm' },
+              ].map((f) => (
+                <div key={f.key}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">{f.label}</label>
+                  <input type={f.type} className="input-field"
+                    value={(form as any)[f.key] || ''} placeholder={f.placeholder}
+                    onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} />
+                </div>
+              ))}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Description</label>
+                <textarea className="input-field" rows={3}
+                  value={form.description || ''}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { label: 'Delivery Fee (KSh)', key: 'deliveryFee', type: 'number' },
+                  { label: 'Min Order (KSh)', key: 'minOrder', type: 'number' },
+                ].map((f) => (
+                  <div key={f.key}>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">{f.label}</label>
+                    <input type="number" className="input-field"
+                      value={(form as any)[f.key] || 0}
+                      onChange={(e) => setForm({ ...form, [f.key]: parseFloat(e.target.value) })} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
             <div>
-              <p className="font-semibold text-sm leading-tight">{item.label}</p>
-              <p className="text-xs opacity-70 mt-0.5">{item.sub}</p>
+              <FieldRow label="Name" value={restaurant.name} />
+              <FieldRow label="Cuisine" value={restaurant.cuisine} />
+              <FieldRow label="Address" value={restaurant.address} />
+              <FieldRow label="Phone" value={restaurant.phone || '—'} />
+              <FieldRow label="Hours" value={restaurant.hours || '—'} />
+              <FieldRow label="Delivery Fee" value={`KSh ${restaurant.deliveryFee}`} />
+              <FieldRow label="Min Order" value={`KSh ${restaurant.minOrder || 0}`} />
+              <FieldRow label="Currency" value={`${restaurant.currencyCode || 'KES'} (${restaurant.currencySymbol || 'KSh'})`} />
             </div>
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="card">
-            <h2 className="text-xl font-bold mb-4">Restaurant Information</h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
-                <input
-                  type="text"
-                  value={isEditing ? formData.name || '' : restaurant.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  disabled={!isEditing}
-                  className="input-field"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                <textarea
-                  value={isEditing ? formData.description || '' : restaurant.description || ''}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  disabled={!isEditing}
-                  className="input-field"
-                  rows={3}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Cuisine</label>
-                  <input
-                    type="text"
-                    value={isEditing ? formData.cuisine || '' : restaurant.cuisine}
-                    onChange={(e) => setFormData({ ...formData, cuisine: e.target.value })}
-                    disabled={!isEditing}
-                    className="input-field"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
-                  <input
-                    type="text"
-                    value={isEditing ? formData.address || '' : restaurant.address}
-                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    disabled={!isEditing}
-                    className="input-field"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Fee</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={isEditing ? formData.deliveryFee || 0 : restaurant.deliveryFee}
-                    onChange={(e) => setFormData({ ...formData, deliveryFee: parseFloat(e.target.value) })}
-                    disabled={!isEditing}
-                    className="input-field"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Min Order</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={isEditing ? formData.minOrder || 0 : restaurant.minOrder || 0}
-                    onChange={(e) => setFormData({ ...formData, minOrder: parseFloat(e.target.value) })}
-                    disabled={!isEditing}
-                    className="input-field"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
-                  <input
-                    type="tel"
-                    value={isEditing ? formData.phone || '' : restaurant.phone || ''}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    disabled={!isEditing}
-                    className="input-field"
-                    placeholder="+1 (555) 123-4567"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Opening Hours / Days</label>
-                  <input
-                    type="text"
-                    value={isEditing ? formData.hours || '' : restaurant.hours || ''}
-                    onChange={(e) => setFormData({ ...formData, hours: e.target.value })}
-                    disabled={!isEditing}
-                    className="input-field"
-                    placeholder="Mon-Sun: 10:00 AM - 11:00 PM"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Currency Code</label>
-                  <select
-                    value={isEditing ? formData.currencyCode || 'KES' : restaurant.currencyCode || 'KES'}
-                    onChange={(e) => setFormData({ ...formData, currencyCode: e.target.value })}
-                    disabled={!isEditing}
-                    className="input-field"
-                  >
-                    {['USD', 'EUR', 'GBP', 'KES', 'NGN', 'GHS', 'ZAR'].map((code) => (
-                      <option key={code} value={code}>
-                        {code}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Currency Symbol</label>
-                  <input
-                    type="text"
-                    maxLength={3}
-                    value={isEditing ? formData.currencySymbol || restaurant.currencySymbol || 'KSh' : restaurant.currencySymbol || 'KSh'}
-                    onChange={(e) => setFormData({ ...formData, currencySymbol: e.target.value })}
-                    disabled={!isEditing}
-                    className="input-field"
-                  />
-                </div>
-              </div>
-            </form>
-          </div>
+          )}
         </div>
 
-        <div className="space-y-6">
+        {/* Right: toggles + meta */}
+        <div className="lg:col-span-2 space-y-4">
           <div className="card">
-            <div className="relative h-48 rounded-lg overflow-hidden mb-4">
-              {imagePreview ? (
-                <img
-                  src={imagePreview}
-                  alt={restaurant.name}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <img
-                  src={`http://localhost:4000${restaurant.imageUrl}`}
-                  alt={restaurant.name}
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = 'https://via.placeholder.com/400x200';
-                  }}
-                />
-              )}
-              {isEditing && (
-                <div className="absolute bottom-2 right-2">
-                  <label className="btn-primary flex items-center gap-2 cursor-pointer">
-                    <Upload size={16} />
-                    Change Image
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageChange}
-                      className="hidden"
-                    />
-                  </label>
+            <p className="section-label">Status & Features</p>
+            {[
+              { label: 'Restaurant Open', value: restaurant.isOpen, color: 'bg-emerald-500' },
+              { label: 'Promoted', value: restaurant.isPromoted, color: 'bg-gold-500' },
+            ].map((t) => (
+              <div key={t.label} className="flex items-center justify-between py-3 border-b border-surface-border last:border-0">
+                <span className="text-sm text-gray-700">{t.label}</span>
+                <div className={`w-10 h-5 rounded-full transition-colors ${t.value ? t.color : 'bg-gray-200'} flex items-center px-0.5`}>
+                  <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${t.value ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Rating</span>
-                <span className="font-medium">⭐ {restaurant.rating.toFixed(1)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Delivery Time</span>
-                <span className="font-medium">
-                  {restaurant.deliveryTimeMinutesMin}-{restaurant.deliveryTimeMinutesMax} min
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Status</span>
-                <span
-                  className={`font-medium ${restaurant.isOpen ? 'text-green-600' : 'text-red-600'}`}
-                >
-                  {restaurant.isOpen ? 'Open' : 'Closed'}
-                </span>
-              </div>
-            </div>
+            ))}
+          </div>
+
+          <div className="card">
+            <p className="section-label">Delivery</p>
+            <FieldRow label="Min time" value={`${restaurant.deliveryTimeMinutesMin} min`} />
+            <FieldRow label="Max time" value={`${restaurant.deliveryTimeMinutesMax} min`} />
+            <FieldRow label="Rating" value={`⭐ ${restaurant.rating?.toFixed(1) || '—'}`} />
           </div>
         </div>
       </div>
     </div>
   );
 }
-

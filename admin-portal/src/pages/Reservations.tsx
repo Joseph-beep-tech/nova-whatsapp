@@ -121,14 +121,14 @@ export default function Reservations() {
   const totalGuests = displayed.filter((r) => r.status !== 'cancelled' && r.status !== 'no_show').reduce((s, r) => s + r.partySize, 0);
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-4">
         <button onClick={() => navigate(`/restaurants/${restaurantId}/details`)} className="p-2 hover:bg-gray-100 rounded-lg">
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">{restaurant?.name} — Reservations</h1>
+          <h1 className="page-title">{restaurant?.name} — Reservations</h1>
           <p className="text-sm text-gray-500">Table bookings from WhatsApp, voice calls and walk-ins</p>
         </div>
         <button onClick={() => { setEditingRes(null); setForm(emptyForm); setShowModal(true); }} className="btn-primary flex items-center gap-2">

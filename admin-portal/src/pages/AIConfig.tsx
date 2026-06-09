@@ -69,14 +69,14 @@ export default function AIConfig() {
   if (isLoading) return <div className="p-6 text-center text-gray-400">Loading AI configuration...</div>;
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl mx-auto">
+    <div className="space-y-6 max-w-3xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-4">
         <button onClick={() => navigate(`/restaurants/${restaurantId}/details`)} className="p-2 hover:bg-gray-100 rounded-lg">
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">{restaurant?.name} — AI Configuration</h1>
+          <h1 className="page-title">{restaurant?.name} — AI Configuration</h1>
           <p className="text-sm text-gray-500">Configure how the AI behaves on WhatsApp and voice calls</p>
         </div>
         <button
