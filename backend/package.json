@@ -4,10 +4,11 @@
   "description": "Backend for Azizi Voice AI Portal",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "ts-node --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "seed": "ts-node src/seed.ts"
   },
   "keywords": [
     "voice",

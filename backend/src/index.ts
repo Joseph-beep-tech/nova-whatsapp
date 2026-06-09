@@ -17,6 +17,12 @@ import whatsappRoutes from './routes/whatsapp';
 import voiceRoutes from './routes/voice';
 import restaurantAIRoutes from './routes/restaurantAI';
 import { whatsappEngine } from './services/whatsappEngine';
+import restaurantRoutes from './routes/restaurants';
+import menuRoutes from './routes/menus';
+import orderRoutes from './routes/orders';
+import riderRoutes from './routes/riders';
+import paymentRoutes from './routes/payments';
+import path from 'path';
 
 dotenv.config();
 
@@ -43,6 +49,16 @@ app.use('/api/whatsapp', whatsappRoutes);
 // Public voice webhook namespace (called by OpenAI Realtime / Twilio — no auth)
 app.use('/api/v1/voice', voiceRoutes);
 app.use('/api/restaurant-ai', restaurantAIRoutes);
+
+// ── Restaurant domain routes ────────────────────────────────────────────────
+app.use('/api/restaurants', restaurantRoutes);
+app.use('/api/menus', menuRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/riders', riderRoutes);
+app.use('/api/payments', paymentRoutes);
+
+// Static file serving for uploaded images
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {

@@ -5,7 +5,7 @@
  * /api/restaurant-ai/reservations — restaurant reservations
  */
 import { Router, Request, Response } from 'express';
-import { authenticate } from '../middleware/auth';
+import { authMiddleware as authenticate } from '../middleware/auth';
 import KnowledgeBase, { KBDocType } from '../models/KnowledgeBase';
 import RestaurantAIConfig from '../models/RestaurantAIConfig';
 import AIInteractionLog from '../models/AIInteractionLog';
