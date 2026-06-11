@@ -91,9 +91,9 @@ async function waPost(path: string, body: object): Promise<any> {
 // We build the URL the same way axios does (baseURL + path).
 async function fetchQrBlob(sessionId: string): Promise<string | null> {
   try {
-    const baseURL: string = (api.defaults.baseURL as string || 'http://localhost:4000').replace(/\/$/, '');
-    const token = localStorage.getItem('auth_token') || '';
-    const url = `${baseURL}/api/whatsapp/session/qr/${sessionId}`;
+    const baseURL: string = 'http://localhost:5000/api';
+    const token = localStorage.getItem('token') || '';
+    const url = `${baseURL}/whatsapp/session/qr/${sessionId}`;
     const res = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

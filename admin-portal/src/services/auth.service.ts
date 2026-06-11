@@ -3,13 +3,13 @@ import { AuthResponse, User } from '../types';
 
 export const authService = {
   async login(email: string, password: string): Promise<AuthResponse> {
-    const response = await api.post<AuthResponse>('/api/auth/login', {
+    const response = await api.post<AuthResponse>('/auth/login', {
       email,
       password,
     });
     
     if (response.data.token) {
-      localStorage.setItem('auth_token', response.data.token);
+      localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
     }
     
@@ -23,10 +23,10 @@ export const authService = {
     role: 'admin' | 'restaurant_owner';
     restaurantId?: string;
   }): Promise<AuthResponse> {
-    const response = await api.post<AuthResponse>('/api/auth/register', data);
+    const response = await api.post<AuthResponse>('/auth/register', data);
     
     if (response.data.token) {
-      localStorage.setItem('auth_token', response.data.token);
+      localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
     }
     
@@ -34,7 +34,7 @@ export const authService = {
   },
 
   logout(): void {
-    localStorage.removeItem('auth_token');
+    localStorage.removeItem('token');
     localStorage.removeItem('user');
   },
 
@@ -49,7 +49,7 @@ export const authService = {
   },
 
   isAuthenticated(): boolean {
-    return !!localStorage.getItem('auth_token');
+    return !!localStorage.getItem('token');
   },
 };
 

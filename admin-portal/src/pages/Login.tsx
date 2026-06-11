@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth.service';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import api from '../services/api';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -10,6 +11,33 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  // Check if user is already logged in from another platform (SSO)
+  useEffect(() => {
+    const checkExistingToken = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (token) {
+          // Verify token is still valid
+          const response = await api.get('/auth/me');
+          if (response.data) {
+            // Token is valid, redirect to dashboard
+            navigate('/', { replace: true });
+            return;
+          }
+        }
+      } catch (err) {
+        // Token is invalid or expired, clear it and show login
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+
+    checkExistingToken();
+  }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,6 +126,12 @@ export default function Login() {
             <p className="text-gray-500 mt-1 text-sm">Sign in to your management portal</p>
           </div>
 
+          {checkingAuth ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 size={32} className="animate-spin text-gold-500 mb-4" />
+              <p className="text-gray-600 text-sm">Checking your access...</p>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
@@ -133,6 +167,7 @@ export default function Login() {
               {loading ? <Loader2 size={18} className="animate-spin" /> : 'Sign In'}
             </button>
           </form>
+          )}
 
           <div className="mt-8 p-4 bg-surface-muted rounded-xl border border-surface-border">
             <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Demo Access</p>

@@ -27,7 +27,7 @@ const menuItems = [
   { icon: Phone, label: 'Call History', href: '/call-history', color: 'slate' },
   { icon: Radio, label: 'Test Call', href: '/test-call', color: 'red' },
   { icon: Zap, label: 'Autopilot', href: '/autopilot', color: 'orange' },
-  { icon: Store, label: 'Restaurants', href: 'http://localhost:5174', color: 'red', external: true },
+  { icon: Store, label: 'Restaurants', href: 'http://localhost:5175', color: 'red', external: true },
 ];
 
 export const Sidebar: React.FC = () => {
