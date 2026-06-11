@@ -18,7 +18,17 @@ import fs from 'fs';
 const router = Router();
 router.use(authenticate);
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Lazy singleton — instantiated on first use so dotenv has already run
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is not set in environment variables.');
+    }
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 // ── File upload setup ─────────────────────────────────────────────────────────
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'kb');
@@ -48,7 +58,7 @@ function chunkText(text: string, maxTokens = 400): string[] {
 }
 
 async function embedChunks(chunks: string[]): Promise<number[][]> {
-  const resp = await openai.embeddings.create({
+  const resp = await getOpenAI().embeddings.create({
     model: 'text-embedding-3-small',
     input: chunks,
   });

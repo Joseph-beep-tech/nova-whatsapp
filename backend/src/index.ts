@@ -1,6 +1,11 @@
+// ── MUST be first — loads .env before ANY module instantiates clients ─────────
+import dotenv from 'dotenv';
+dotenv.config();
+// ─────────────────────────────────────────────────────────────────────────────
+
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import path from 'path';
 import { connectDB } from './config/database';
 import { errorHandler } from './middleware/auth';
 
@@ -16,78 +21,59 @@ import callHistoryRoutes from './routes/callHistory';
 import whatsappRoutes from './routes/whatsapp';
 import voiceRoutes from './routes/voice';
 import restaurantAIRoutes from './routes/restaurantAI';
-import { whatsappEngine } from './services/whatsappEngine';
 import restaurantRoutes from './routes/restaurants';
 import menuRoutes from './routes/menus';
 import orderRoutes from './routes/orders';
 import riderRoutes from './routes/riders';
 import paymentRoutes from './routes/payments';
-import path from 'path';
-
-dotenv.config();
+import { whatsappEngine } from './services/whatsappEngine';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 4000;
 
-// Middleware
+// ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
 
-// Connect to database
+// ── Database ──────────────────────────────────────────────────────────────────
 connectDB();
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/credentials', credentialsRoutes);
-app.use('/api/prompts', promptsRoutes);
-app.use('/api/phone-numbers', phoneNumbersRoutes);
-app.use('/api/credits', creditsRoutes);
-app.use('/api/autopilot', autopilotRoutes);
-app.use('/api/test-call', testCallRoutes);
-app.use('/api/call-history', callHistoryRoutes);
-app.use('/api/whatsapp', whatsappRoutes);
-// Public voice webhook namespace (called by OpenAI Realtime / Twilio — no auth)
-app.use('/api/v1/voice', voiceRoutes);
-app.use('/api/restaurant-ai', restaurantAIRoutes);
-
-// ── Restaurant domain routes ────────────────────────────────────────────────
-app.use('/api/restaurants', restaurantRoutes);
-app.use('/api/menus', menuRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/riders', riderRoutes);
-app.use('/api/payments', paymentRoutes);
-
-// Static file serving for uploaded images
+// ── Static uploads ────────────────────────────────────────────────────────────
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// Health check
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', message: 'Server is running' });
-});
+// ── API Routes ────────────────────────────────────────────────────────────────
+app.use('/api/auth',          authRoutes);
+app.use('/api/credentials',   credentialsRoutes);
+app.use('/api/prompts',       promptsRoutes);
+app.use('/api/phone-numbers', phoneNumbersRoutes);
+app.use('/api/credits',       creditsRoutes);
+app.use('/api/autopilot',     autopilotRoutes);
+app.use('/api/test-call',     testCallRoutes);
+app.use('/api/call-history',  callHistoryRoutes);
+app.use('/api/whatsapp',      whatsappRoutes);
+app.use('/api/v1/voice',      voiceRoutes);
+app.use('/api/restaurant-ai', restaurantAIRoutes);
 
-// Health check with info
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'API server is running',
-    timestamp: new Date().toISOString()
-  });
-});
+// Restaurant domain
+app.use('/api/restaurants', restaurantRoutes);
+app.use('/api/menus',       menuRoutes);
+app.use('/api/orders',      orderRoutes);
+app.use('/api/riders',      riderRoutes);
+app.use('/api/payments',    paymentRoutes);
 
-// Error handler
+// ── Health checks ─────────────────────────────────────────────────────────────
+app.get('/health',      (_req: Request, res: Response) => res.json({ status: 'ok' }));
+app.get('/api/health',  (_req: Request, res: Response) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+// ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorHandler);
 
+// ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📋 API Base: http://localhost:${PORT}/api`);
-  console.log(`\nAvailable endpoints:`);
-  console.log(`  POST /api/auth/register - Register new user`);
-  console.log(`  POST /api/auth/login - Login user`);
-  console.log(`  GET  /api/auth/me - Get current user`);
-  console.log(`  *    /api/whatsapp/sessions - WhatsApp engine`);
+  console.log(`\n🚀  NovaGo backend running → http://localhost:${PORT}`);
+  console.log(`📦  Database: ${process.env.MONGODB_URI?.replace(/:([^:@]+)@/, ':****@') || 'not set'}`);
+  console.log(`🌍  Environment: ${process.env.NODE_ENV || 'development'}\n`);
 
-  // Restore any previously connected WhatsApp sessions (LocalAuth on disk).
-  // Delay slightly so MongoDB connection (connectDB above) has a chance to settle.
   setTimeout(() => {
     whatsappEngine.restoreFromDb().catch((err) => {
       console.error('[WhatsAppEngine] restore on boot failed:', err);
