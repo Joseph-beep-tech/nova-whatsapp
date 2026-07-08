@@ -70,7 +70,7 @@ function normaliseState(raw: string): SessionState {
 // ── API helpers using the shared axios instance ───────────────────────────────
 async function waGet(path: string): Promise<any> {
   try {
-    const res = await api.get(`/api/whatsapp${path}`);
+    const res = await api.get(`/whatsapp${path}`);
     return res.data;
   } catch (e: any) {
     console.warn(`[WA GET] ${path}`, e?.response?.status, e?.message);
@@ -79,28 +79,28 @@ async function waGet(path: string): Promise<any> {
 }
 async function waPost(path: string, body: object): Promise<any> {
   try {
-    const res = await api.post(`/api/whatsapp${path}`, body);
+    const res = await api.post(`/whatsapp${path}`, body);
     return res.data;
   } catch (e: any) {
     console.warn(`[WA POST] ${path}`, e?.response?.status, e?.message);
     return null;
   }
 }
-
-// QR image needs a raw fetch because we need a Blob, not JSON.
-// We build the URL the same way axios does (baseURL + path).
-async function fetchQrBlob(sessionId: string): Promise<string | null> {
+async function waDelete(path: string): Promise<any> {
   try {
-    const baseURL: string = import.meta.env.VITE_API_URL || '/api';
-    const token = localStorage.getItem('token') || '';
-    const url = `${baseURL}/whatsapp/session/qr/${sessionId}`;
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    if (blob.size < 50) return null;
-    return URL.createObjectURL(blob);
+    const res = await api.delete(`/whatsapp${path}`);
+    return res.data;
+  } catch (e: any) {
+    console.warn(`[WA DELETE] ${path}`, e?.response?.status, e?.message);
+    return null;
+  }
+}
+
+// QR is returned as JSON { qrDataUrl: string | null, status: string }
+async function fetchQrDataUrl(sessionId: string): Promise<string | null> {
+  try {
+    const res = await api.get(`/whatsapp/sessions/${sessionId}/qr`);
+    return res.data?.qrDataUrl || null;
   } catch { return null; }
 }
 
@@ -113,7 +113,7 @@ const QUICK_REPLIES = [
 ];
 
 // ─── QR Connect Panel ─────────────────────────────────────────────────────────
-function QRConnectPanel({ onConnected }: { onConnected: (phone?: string) => void }) {
+function QRConnectPanel({ onConnected }: { onConnected: (phone?: string, sid?: string) => void }) {
   const [session, setSession]   = useState<WaSession | null>(null);
   const [sessionId, setSessionId] = useState('novago-main');
   const [starting, setStarting] = useState(false);
@@ -128,31 +128,30 @@ function QRConnectPanel({ onConnected }: { onConnected: (phone?: string) => void
 
   const pollStatus = useCallback(async (sid: string) => {
     pollTick.current++;
-    const data = await waGet(`/session/status/${sid}`);
+    const data = await waGet(`/sessions/${sid}/status`);
     if (!data) return;
 
-    // shape: { success, data: { sessionId, state, phone, pushName } }
-    const inner = data?.data ?? data;
-    const state = normaliseState(inner?.state || inner?.status || '');
+    // shape: { status, phone, pushname, lastError }
+    const state = normaliseState(data?.status || '');
 
     let qrObjectUrl: string | undefined;
     if (state === 'SCAN_QR_CODE' && pollTick.current % 2 === 1) {
-      const url = await fetchQrBlob(sid);
+      const url = await fetchQrDataUrl(sid);
       if (url) { revokeOldQr(); prevQrUrl.current = url; qrObjectUrl = url; }
     }
 
     setSession(prev => ({
       ...(prev ?? { sessionId: sid }),
       sessionId: sid, state,
-      phone:      inner?.phone    ?? prev?.phone,
-      pushName:   inner?.pushName ?? prev?.pushName,
+      phone:    data?.phone    ?? prev?.phone,
+      pushName: data?.pushname ?? prev?.pushName,
       qrObjectUrl: qrObjectUrl ?? (state === 'SCAN_QR_CODE' ? prev?.qrObjectUrl : undefined),
     }));
 
     if (state === 'CONNECTED') {
       clearInterval(pollRef.current);
       revokeOldQr();
-      onConnected(inner?.phone);
+      onConnected(data?.phone, sid);
     }
   }, [onConnected]);
 
@@ -166,12 +165,17 @@ function QRConnectPanel({ onConnected }: { onConnected: (phone?: string) => void
         const s   = list[0];
         const sid = s.sessionId || s.id || 'novago-main';
         setSessionId(sid);
-        setSession({ sessionId: sid, state: normaliseState(s.state || s.status || '') });
-        pollRef.current = setInterval(() => pollStatus(sid), 4000);
+        const state = normaliseState(s.status || '');
+        setSession({ sessionId: sid, state });
+        if (state !== 'CONNECTED') {
+          pollRef.current = setInterval(() => pollStatus(sid), 4000);
+        } else {
+          onConnected(s.phone, sid);
+        }
       }
     })();
     return () => { clearInterval(pollRef.current); revokeOldQr(); };
-  }, [pollStatus]);
+  }, [pollStatus, onConnected]);
 
   const handleConnect = async () => {
     if (!sessionId.trim()) return;
@@ -179,14 +183,11 @@ function QRConnectPanel({ onConnected }: { onConnected: (phone?: string) => void
     clearInterval(pollRef.current);
     pollTick.current = 0;
 
-    const res = await waGet(`/session/start/${sessionId.trim()}`);
+    const res = await waPost('/sessions', { name: sessionId.trim() });
     setStarting(false);
 
     if (res === null) {
-      setError(
-        'The backend could not reach the WhatsApp API (wwebjs-api). ' +
-        'Make sure wwebjs-api is running and WA_API_URL is set in the backend .env file.'
-      );
+      setError('Failed to start session. Make sure the backend is running and your account is set up.');
       return;
     }
 
@@ -198,7 +199,7 @@ function QRConnectPanel({ onConnected }: { onConnected: (phone?: string) => void
     clearInterval(pollRef.current);
     revokeOldQr();
     setSession(prev => prev ? { ...prev, state: 'INITIALIZING', qrObjectUrl: undefined } : null);
-    await waGet(`/session/terminate/${sessionId}`);
+    await waPost(`/sessions/${sessionId}/disconnect`, {});
     await new Promise(r => setTimeout(r, 1500));
     await handleConnect();
   };
@@ -376,6 +377,7 @@ export default function WhatsApp() {
   const [tab, setTab]                       = useState<'connect' | 'inbox'>('connect');
   const [connected, setConnected]           = useState(false);
   const [connectedPhone, setConnectedPhone] = useState('');
+  const [activeSessionId, setActiveSessionId] = useState('');
   const [chats, setChats]                   = useState<Chat[]>([]);
   const [selectedChat, setSelectedChat]     = useState<Chat | null>(null);
   const [messages, setMessages]             = useState<Message[]>([]);
@@ -400,33 +402,39 @@ export default function WhatsApp() {
       const res = await waGet('/sessions');
       if (!res) return;
       const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-      const live = list.find((s: any) => normaliseState(s.state || s.status || '') === 'CONNECTED');
-      if (live) { setConnected(true); setConnectedPhone(live.phone || ''); setTab('inbox'); }
+      const live = list.find((s: any) => normaliseState(s.status || '') === 'CONNECTED');
+      if (live) {
+        setConnected(true);
+        setConnectedPhone(live.phone || '');
+        setActiveSessionId(live.sessionId || '');
+        setTab('inbox');
+      }
     })();
   }, []);
 
   const fetchChats = useCallback(async () => {
+    if (!activeSessionId) return;
     setLoadingChats(true);
-    const data = await waGet(`/chats?filter=${filter}&limit=60`);
+    const data = await waGet(`/sessions/${activeSessionId}/chats`);
     if (data) {
       const raw: any[] = Array.isArray(data) ? data : (data.chats || data.data || []);
       setChats(raw.map((c: any) => ({
-        id: c.id || c._id || c.identifier || String(Math.random()),
-        identifier: c.identifier || c.id || '',
-        platform: c.platform || 'c.us',
-        contactName: c.contactName || c.name || c.identifier || 'Unknown',
-        contactPhone: c.contactPhone || c.phone || c.identifier || '',
+        id: c.chatId || c.id || String(Math.random()),
+        identifier: c.chatId || c.id || '',
+        platform: 'whatsapp',
+        contactName: c.contactName || c.chatId || 'Unknown',
+        contactPhone: c.chatId || '',
         lastMessage: c.lastMessage || '',
-        lastMessageTime: c.lastMessageTime || c.updatedAt || new Date().toISOString(),
-        unreadCount: c.unreadCount || 0,
-        status: c.status || 'open',
+        lastMessageTime: c.lastMessageTime || new Date().toISOString(),
+        unreadCount: 0,
+        status: 'open',
         isGroup: !!c.isGroup,
-        tags: c.tags || [],
-        assignedTo: c.assignedTo,
+        tags: [],
+        assignedTo: undefined,
       })));
     }
     setLoadingChats(false);
-  }, [filter]);
+  }, [activeSessionId, filter]);
 
   useEffect(() => {
     if (tab !== 'inbox') return;
@@ -436,22 +444,23 @@ export default function WhatsApp() {
   }, [tab, fetchChats]);
 
   const fetchMessages = useCallback(async (chat: Chat) => {
+    if (!activeSessionId) return;
     setLoadingMsgs(true);
-    const data = await waGet(`/messages?identifier=${encodeURIComponent(chat.identifier)}&platform=${chat.platform}&limit=50`);
+    const data = await waGet(`/sessions/${activeSessionId}/chats/${encodeURIComponent(chat.identifier)}/messages?limit=50`);
     if (data) {
       const raw: any[] = Array.isArray(data) ? data : (data.messages || data.data || []);
       setMessages(raw.map((m: any) => ({
-        id: m.id || m._id || String(Math.random()),
-        content: m.content || m.body || m.text || '',
-        contentType: m.contentType || 'text',
+        id: m.id || String(Math.random()),
+        content: m.body || m.content || '',
+        contentType: 'text',
         timestamp: m.timestamp || m.createdAt || new Date().toISOString(),
-        sender: m.sender || { type: m.fromMe ? 'bot' : 'customer', name: m.fromMe ? 'AI' : chat.contactName },
-        isFromMe: !!m.isFromMe || !!m.fromMe,
+        sender: { type: m.fromMe ? 'bot' : 'customer', name: m.fromMe ? 'AI' : chat.contactName },
+        isFromMe: !!m.fromMe,
       })));
     }
     setLoadingMsgs(false);
     setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-  }, []);
+  }, [activeSessionId]);
 
   const selectChat = async (chat: Chat) => {
     clearInterval(msgPollRef.current);
@@ -459,7 +468,7 @@ export default function WhatsApp() {
     setMessages([]); setOrders([]); setInputText('');
     await fetchMessages(chat);
     try {
-      const ords = await api.get(`/api/orders?customerPhone=${encodeURIComponent(chat.contactPhone)}`);
+      const ords = await api.get(`/orders?customerPhone=${encodeURIComponent(chat.contactPhone)}`);
       const list = Array.isArray(ords.data) ? ords.data : (ords.data?.data || []);
       setOrders(list.slice(0, 3));
     } catch { /* no orders is fine */ }
@@ -471,28 +480,24 @@ export default function WhatsApp() {
   const handleTakeover = async () => {
     if (!selectedChat) return;
     setClaimLoading(true);
-    const adminId = localStorage.getItem('novago_admin_id') || 'admin';
     if (isClaimed) {
-      await waPost('/chats/release', { identifier: selectedChat.identifier, platform: selectedChat.platform });
       setIsClaimed(false);
       pushSys('Released back to AI — NovaGo AI has resumed');
     } else {
-      const res = await waPost('/chats/claim', { identifier: selectedChat.identifier, platform: selectedChat.platform, agentId: adminId });
-      if (res) { setIsClaimed(true); pushSys('You claimed this conversation — AI is paused'); }
+      setIsClaimed(true);
+      pushSys('You claimed this conversation — AI is paused');
     }
     setClaimLoading(false);
-    fetchChats();
   };
 
   const handleSend = async () => {
     const text = inputText.trim();
-    if (!text || !selectedChat) return;
+    if (!text || !selectedChat || !activeSessionId) return;
     if (inputMode === 'note') {
       pushMsg({ id: `note-${Date.now()}`, content: text, contentType: 'note',
         timestamp: new Date().toISOString(), sender: { type: 'agent', name: 'Admin' }, isFromMe: true });
     } else {
-      if (!isClaimed) await handleTakeover();
-      await waPost('/messages/send', { identifier: selectedChat.identifier, platform: selectedChat.platform, content: text, contentType: 'text' });
+      await waPost(`/sessions/${activeSessionId}/messages`, { to: selectedChat.identifier, text });
       pushMsg({ id: `sent-${Date.now()}`, content: text, contentType: 'text',
         timestamp: new Date().toISOString(), sender: { type: 'agent', name: 'Admin' }, isFromMe: true });
     }
@@ -507,8 +512,10 @@ export default function WhatsApp() {
     timestamp: new Date().toISOString(), sender: { type: 'bot', name: 'System' }, isFromMe: false,
   });
 
-  const onConnected = (phone?: string) => {
-    setConnected(true); setConnectedPhone(phone || ''); setTab('inbox');
+  const onConnected = (phone?: string, sid?: string) => {
+    setConnected(true); setConnectedPhone(phone || '');
+    if (sid) setActiveSessionId(sid);
+    setTab('inbox');
   };
 
   const totalUnread = chats.reduce((s, c) => s + c.unreadCount, 0);
