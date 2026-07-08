@@ -151,7 +151,10 @@ router.get('/sessions/:sessionId/qr', authMiddleware, async (req: AuthRequest, r
       { headers: waHeaders() }
     );
 
-    if (!resp.ok) {
+    // wwebjs-api returns JSON {success:false} with 200 when QR isn't ready yet —
+    // only treat the body as an image if Content-Type is actually image/*
+    const contentType = resp.headers.get('content-type') || '';
+    if (!resp.ok || !contentType.includes('image/')) {
       return res.json({ status: 'not_ready', qrDataUrl: null });
     }
 

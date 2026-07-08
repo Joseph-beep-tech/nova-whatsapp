@@ -61,9 +61,15 @@ function fmt(ts: string) {
 function normaliseState(raw: string): SessionState {
   const s = (raw || '').toUpperCase();
   if (s === 'CONNECTED' || s === 'READY') return 'CONNECTED';
-  if (s === 'SCAN_QR_CODE' || s === 'QR' || s === 'QR_REQUIRED' || s === 'QR_PENDING') return 'SCAN_QR_CODE';
-  if (s === 'INITIALIZING' || s === 'STARTING' || s === 'LOADING' || s === 'AUTHENTICATED') return 'INITIALIZING';
-  if (s === 'FAILED' || s === 'ERROR') return 'FAILED';
+  // WAState values returned by whatsapp-web.js getState():
+  // PAIRING = waiting for QR scan, UNPAIRED / UNPAIRED_IDLE = not linked
+  if (s === 'SCAN_QR_CODE' || s === 'QR' || s === 'QR_REQUIRED' || s === 'QR_PENDING'
+      || s === 'PAIRING' || s === 'UNPAIRED' || s === 'UNPAIRED_IDLE') return 'SCAN_QR_CODE';
+  // OPENING = browser/page loading, UNLAUNCHED = not started yet
+  if (s === 'INITIALIZING' || s === 'STARTING' || s === 'LOADING' || s === 'AUTHENTICATED'
+      || s === 'OPENING' || s === 'UNLAUNCHED') return 'INITIALIZING';
+  if (s === 'FAILED' || s === 'ERROR' || s === 'CONFLICT' || s === 'DEPRECATED_VERSION'
+      || s === 'TOS_BLOCK' || s === 'SMB_TOS_BLOCK') return 'FAILED';
   return 'DISCONNECTED';
 }
 
