@@ -76,13 +76,17 @@ router.post('/sessions', authMiddleware, async (req: AuthRequest, res: Response)
     });
 
     if (WA_API_URL) {
+      // wwebjs-api's start endpoint blocks until Chromium's pupPage is ready
+      // (can take 30-90s). Use a 90s timeout and treat timeout as "still starting".
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 90_000);
       const resp = await fetch(
         `${WA_API_URL}/session/start/${encodeURIComponent(sessionId)}`,
-        { headers: waHeaders() }
+        { headers: waHeaders(), signal: controller.signal }
       ).catch((e) => {
-        console.error('[whatsapp][start] fetch error:', e?.message);
+        if (e?.name !== 'AbortError') console.error('[whatsapp][start] fetch error:', e?.message);
         return null;
-      });
+      }).finally(() => clearTimeout(timer));
 
       if (resp && !resp.ok) {
         const body = await resp.text().catch(() => '');
@@ -116,8 +120,22 @@ router.get('/sessions/:sessionId/status', authMiddleware, async (req: AuthReques
 
     const data: any = await resp.json().catch(() => ({}));
 
-    // wwebjs-api returns { success, state } — map to { status }
-    const status: string = (data?.state || data?.status || 'disconnected').toLowerCase();
+    // wwebjs-api returns { success, state, message }
+    // state is a whatsapp-web.js WAState string (CONNECTED, PAIRING, OPENING, etc.)
+    // When null + message='session_not_found', the session is still booting — keep as
+    // 'initializing' so the frontend spinner stays up rather than showing DISCONNECTED.
+    // Only use 'disconnected' when we know the browser/session is actually gone.
+    const rawState: string = data?.state || data?.status || '';
+    const waMessage: string = data?.message || '';
+    let status: string;
+    if (rawState) {
+      status = rawState.toLowerCase();
+    } else if (waMessage === 'session_not_found') {
+      status = 'initializing';
+    } else {
+      // browser tab closed, session closed, auth_failure, etc.
+      status = 'disconnected';
+    }
 
     // Persist latest status so the DB stays in sync
     await prisma.whatsAppSession.updateMany({
