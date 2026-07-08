@@ -1,0 +1,6 @@
+[phases.install]
+cmds = []
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+NODE_ENV = "production"
