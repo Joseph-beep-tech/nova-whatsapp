@@ -1,7 +1,0 @@
-[phases.setup]
-nixPkgs = ["chromium"]
-
-[variables]
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-PUPPETEER_EXECUTABLE_PATH = "/run/current-system/sw/bin/chromium"
-NODE_ENV = "production"
