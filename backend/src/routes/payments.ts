@@ -1,34 +1,22 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import OrderPayment from '../models/OrderPayment';
-import Order from '../models/Order';
-import mpesaService from '../services/mpesa';
+import { prisma } from '../lib/prisma';
+import { stkPush, normalizePhone } from '../services/mpesa';
 
 const router = Router();
 
-function toClient(doc: any) {
-  const obj = doc.toObject ? doc.toObject() : doc;
-  return {
-    ...obj,
-    id: obj._id?.toString(),
-    _id: undefined,
-    __v: undefined,
-    orderId: obj.orderId?.toString(),
-    restaurantId: obj.restaurantId?.toString(),
-  };
-}
-
-// GET /api/payments  — all payments (admin)
+// GET /api/payments  — all OrderPayments (admin)
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { status, restaurantId, limit = 200 } = req.query;
-    const filter: any = {};
-    if (status) filter.status = status;
-    if (restaurantId) filter.restaurantId = restaurantId;
-    const payments = await OrderPayment.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(Number(limit));
-    res.json(payments.map(toClient));
+    const { status, limit = '200' } = req.query;
+    const where: any = {};
+    if (status) where.status = status;
+    const payments = await prisma.orderPayment.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: Number(limit),
+    });
+    res.json(payments);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -37,9 +25,15 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 // GET /api/payments/restaurant/:restaurantId
 router.get('/restaurant/:restaurantId', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const payments = await OrderPayment.find({ restaurantId: req.params.restaurantId })
-      .sort({ createdAt: -1 });
-    res.json(payments.map(toClient));
+    // OrderPayment has no restaurantId — join via Order
+    const payments = await prisma.$queryRaw<any[]>`
+      SELECT op.*
+      FROM "OrderPayment" op
+      JOIN "Order" o ON op."orderId" = o.id
+      WHERE o."restaurantId" = ${req.params.restaurantId}
+      ORDER BY op."createdAt" DESC
+    `;
+    res.json(payments);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -48,9 +42,9 @@ router.get('/restaurant/:restaurantId', authMiddleware, async (req: Request, res
 // GET /api/payments/order/:orderId
 router.get('/order/:orderId', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const payment = await OrderPayment.findOne({ orderId: req.params.orderId });
+    const payment = await prisma.orderPayment.findFirst({ where: { orderId: req.params.orderId } });
     if (!payment) return res.status(404).json({ message: 'Payment not found' });
-    res.json(toClient(payment));
+    res.json(payment);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -60,25 +54,30 @@ router.get('/order/:orderId', authMiddleware, async (req: Request, res: Response
 router.post('/mpesa/stk', async (req: Request, res: Response) => {
   try {
     const { orderId, phone } = req.body;
-    const order = await Order.findById(orderId);
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    const payment = await OrderPayment.findOne({ orderId });
+    const payment = await prisma.orderPayment.findFirst({ where: { orderId } });
     if (!payment) return res.status(404).json({ message: 'Payment record not found' });
 
-    const result = await mpesaService.initiateSTKPush(
-      phone,
-      order.total,
-      `NovaGo-${order._id.toString().slice(-6).toUpperCase()}`,
-      `Order payment for ${order.customerName}`
-    );
+    const result = await stkPush({
+      phoneNumber: phone,
+      amount: order.total,
+      accountReference: `NovaGo-${order.id.slice(-6).toUpperCase()}`,
+      transactionDesc: `Order payment for ${order.customerName}`,
+    });
 
-    payment.mpesaPhone = phone;
-    payment.merchantRequestId = result.MerchantRequestID;
-    payment.checkoutRequestId = result.CheckoutRequestID;
-    await payment.save();
+    // Store checkout request ID in reference field
+    await prisma.orderPayment.update({
+      where: { id: payment.id },
+      data: { reference: result.CheckoutRequestID },
+    });
 
-    res.json({ success: true, checkoutRequestId: result.CheckoutRequestID, message: 'STK push sent to ' + phone });
+    res.json({
+      success: true,
+      checkoutRequestId: result.CheckoutRequestID,
+      message: 'STK push sent to ' + phone,
+    });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -92,26 +91,34 @@ router.post('/mpesa/callback', async (req: Request, res: Response) => {
     if (!stkCallback) return res.json({ ResultCode: 0 });
 
     const { CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = stkCallback;
-    const payment = await OrderPayment.findOne({ checkoutRequestId: CheckoutRequestID });
+
+    // Find payment by checkoutRequestId stored in reference
+    const payment = await prisma.orderPayment.findFirst({
+      where: { reference: CheckoutRequestID },
+    });
     if (!payment) return res.json({ ResultCode: 0 });
 
     if (ResultCode === 0) {
       const items = CallbackMetadata?.Item || [];
       const getVal = (name: string) => items.find((i: any) => i.Name === name)?.Value;
-      payment.status = 'completed';
-      payment.mpesaReceiptNumber = getVal('MpesaReceiptNumber');
-      payment.paidAt = new Date();
+      const mpesaReceiptNumber = getVal('MpesaReceiptNumber');
 
-      // Mark order payment status
-      await Order.findByIdAndUpdate(payment.orderId, { paymentStatus: 'paid' });
+      await prisma.orderPayment.update({
+        where: { id: payment.id },
+        data: { status: 'completed', reference: mpesaReceiptNumber || CheckoutRequestID },
+      });
+      // Update order payment status
+      await prisma.order.update({
+        where: { id: payment.orderId },
+        data: { paymentStatus: 'paid' },
+      });
     } else {
-      payment.status = 'failed';
-      payment.failureReason = ResultDesc;
-      await Order.findByIdAndUpdate(payment.orderId, { paymentStatus: 'failed' });
+      await prisma.orderPayment.update({ where: { id: payment.id }, data: { status: 'failed' } });
+      await prisma.order.update({
+        where: { id: payment.orderId },
+        data: { paymentStatus: 'failed' },
+      });
     }
-    payment.resultCode = ResultCode;
-    payment.resultDesc = ResultDesc;
-    await payment.save();
 
     res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (err: any) {
@@ -124,10 +131,13 @@ router.post('/mpesa/callback', async (req: Request, res: Response) => {
 router.patch('/:id/status', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
-    const payment = await OrderPayment.findByIdAndUpdate(req.params.id, { status }, { new: true });
-    if (!payment) return res.status(404).json({ message: 'Not found' });
-    res.json(toClient(payment));
+    const payment = await prisma.orderPayment.update({
+      where: { id: req.params.id },
+      data: { status },
+    });
+    res.json(payment);
   } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ message: 'Not found' });
     res.status(500).json({ message: err.message });
   }
 });

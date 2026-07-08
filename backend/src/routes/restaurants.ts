@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import Restaurant from '../models/Restaurant';
+import { prisma } from '../lib/prisma';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -28,9 +28,15 @@ const upload = multer({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function toClient(doc: any) {
-  const obj = doc.toObject ? doc.toObject() : doc;
-  return { ...obj, id: obj._id?.toString(), _id: undefined, __v: undefined };
+function toClient(r: any) {
+  return {
+    ...r,
+    id: r.id,
+    // Expose location as nested object for backward compat
+    location: r.locationLat != null && r.locationLng != null
+      ? { lat: r.locationLat, lng: r.locationLng }
+      : undefined,
+  };
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -38,7 +44,7 @@ function toClient(doc: any) {
 // GET /api/restaurants
 router.get('/', async (_req: Request, res: Response) => {
   try {
-    const restaurants = await Restaurant.find().sort({ createdAt: -1 });
+    const restaurants = await prisma.restaurant.findMany({ orderBy: { createdAt: 'desc' } });
     res.json(restaurants.map(toClient));
   } catch (err: any) {
     res.status(500).json({ message: err.message });
@@ -48,7 +54,7 @@ router.get('/', async (_req: Request, res: Response) => {
 // GET /api/restaurants/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const r = await Restaurant.findById(req.params.id);
+    const r = await prisma.restaurant.findUnique({ where: { id: req.params.id } });
     if (!r) return res.status(404).json({ message: 'Restaurant not found' });
     res.json(toClient(r));
   } catch (err: any) {
@@ -59,15 +65,31 @@ router.get('/:id', async (req: Request, res: Response) => {
 // POST /api/restaurants  (protected)
 router.post('/', authMiddleware, upload.single('image'), async (req: Request, res: Response) => {
   try {
-    const data = { ...req.body };
+    const data: any = { ...req.body };
     if (req.file) data.imageUrl = `/uploads/restaurants/${req.file.filename}`;
+
     if (typeof data.features === 'string') {
       try { data.features = JSON.parse(data.features); } catch { data.features = []; }
     }
+
+    // Flatten location
     if (typeof data.location === 'string') {
-      try { data.location = JSON.parse(data.location); } catch { delete data.location; }
+      try {
+        const loc = JSON.parse(data.location);
+        data.locationLat = loc.lat;
+        data.locationLng = loc.lng;
+      } catch { /* ignore */ }
+      delete data.location;
     }
-    const restaurant = await Restaurant.create(data);
+
+    // Coerce numerics
+    ['deliveryFee', 'deliveryTimeMinutesMin', 'deliveryTimeMinutesMax', 'minOrder', 'rating', 'reviewCount'].forEach((k) => {
+      if (data[k] !== undefined) data[k] = Number(data[k]);
+    });
+    if (data.isOpen !== undefined) data.isOpen = String(data.isOpen) === 'true';
+    if (data.isPromoted !== undefined) data.isPromoted = String(data.isPromoted) === 'true';
+
+    const restaurant = await prisma.restaurant.create({ data });
     res.status(201).json(toClient(restaurant));
   } catch (err: any) {
     res.status(400).json({ message: err.message });
@@ -77,22 +99,39 @@ router.post('/', authMiddleware, upload.single('image'), async (req: Request, re
 // PUT /api/restaurants/:id  (protected)
 router.put('/:id', authMiddleware, upload.single('image'), async (req: Request, res: Response) => {
   try {
-    const data = { ...req.body };
+    const data: any = { ...req.body };
     if (req.file) data.imageUrl = `/uploads/restaurants/${req.file.filename}`;
+
     if (typeof data.features === 'string') {
       try { data.features = JSON.parse(data.features); } catch { data.features = []; }
     }
-    // Coerce numeric strings
-    ['deliveryFee','deliveryTimeMinutesMin','deliveryTimeMinutesMax','minOrder','rating','reviewCount'].forEach((k) => {
+
+    // Flatten location
+    if (typeof data.location === 'string') {
+      try {
+        const loc = JSON.parse(data.location);
+        data.locationLat = loc.lat;
+        data.locationLng = loc.lng;
+      } catch { /* ignore */ }
+      delete data.location;
+    }
+
+    ['deliveryFee', 'deliveryTimeMinutesMin', 'deliveryTimeMinutesMax', 'minOrder', 'rating', 'reviewCount'].forEach((k) => {
       if (data[k] !== undefined) data[k] = Number(data[k]);
     });
     if (data.isOpen !== undefined) data.isOpen = String(data.isOpen) === 'true';
     if (data.isPromoted !== undefined) data.isPromoted = String(data.isPromoted) === 'true';
 
-    const restaurant = await Restaurant.findByIdAndUpdate(req.params.id, data, { new: true, runValidators: true });
-    if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
+    // Remove undefined fields
+    Object.keys(data).forEach((k) => data[k] === undefined && delete data[k]);
+
+    const restaurant = await prisma.restaurant.update({
+      where: { id: req.params.id },
+      data,
+    });
     res.json(toClient(restaurant));
   } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ message: 'Restaurant not found' });
     res.status(400).json({ message: err.message });
   }
 });
@@ -100,11 +139,13 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req: Request, 
 // PATCH /api/restaurants/:id/toggle  — quick open/close toggle (protected)
 router.patch('/:id/toggle', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const r = await Restaurant.findById(req.params.id);
+    const r = await prisma.restaurant.findUnique({ where: { id: req.params.id } });
     if (!r) return res.status(404).json({ message: 'Not found' });
-    r.isOpen = !r.isOpen;
-    await r.save();
-    res.json(toClient(r));
+    const updated = await prisma.restaurant.update({
+      where: { id: req.params.id },
+      data: { isOpen: !r.isOpen },
+    });
+    res.json(toClient(updated));
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -113,9 +154,11 @@ router.patch('/:id/toggle', authMiddleware, async (req: Request, res: Response) 
 // DELETE /api/restaurants/:id  (protected)
 router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const r = await Restaurant.findByIdAndDelete(req.params.id);
+    const r = await prisma.restaurant.findUnique({ where: { id: req.params.id } });
     if (!r) return res.status(404).json({ message: 'Not found' });
-    // Clean up image
+
+    await prisma.restaurant.delete({ where: { id: req.params.id } });
+
     if (r.imageUrl) {
       const imgPath = path.join(process.cwd(), r.imageUrl);
       if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
@@ -126,5 +169,4 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// Serve uploaded images statically (registered in index.ts)
 export default router;

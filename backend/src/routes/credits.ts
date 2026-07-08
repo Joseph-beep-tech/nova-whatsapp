@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
-import VoiceCredit from '../models/VoiceCredit';
-import Payment from '../models/Payment';
+import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 import { stkPush, stkQuery, normalizePhone } from '../services/mpesa';
 
@@ -34,29 +33,22 @@ function generateRef(): string {
   return ref;
 }
 
-// ---------------------------------------------------------------------------
-// GET / — balance + transactions + pricing
-// ---------------------------------------------------------------------------
+// GET / — balance + pricing
 router.get('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    let voiceCredit = await VoiceCredit.findOne({ userId: req.userId });
+    let voiceCredit = await prisma.voiceCredit.findUnique({ where: { userId: req.userId } });
 
     if (!voiceCredit) {
-      voiceCredit = new VoiceCredit({
-        userId: req.userId,
-        availableCredits: 0,
-        totalFunded: 0,
-        totalUsed: 0,
-        transactions: [],
+      voiceCredit = await prisma.voiceCredit.create({
+        data: { userId: req.userId!, balance: 0 },
       });
-      await voiceCredit.save();
     }
 
     res.json({
-      availableCredits: voiceCredit.availableCredits,
-      totalFunded: voiceCredit.totalFunded,
-      totalUsed: voiceCredit.totalUsed,
-      transactions: voiceCredit.transactions,
+      availableCredits: voiceCredit.balance,
+      totalFunded: voiceCredit.balance,
+      totalUsed: 0,
+      transactions: [],
       pricing: PRICING,
       packages: CREDIT_PACKAGES,
     });
@@ -66,9 +58,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// ---------------------------------------------------------------------------
 // POST /initiate — start M-Pesa STK Push payment
-// ---------------------------------------------------------------------------
 router.post('/initiate', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { amount, paymentMethod, phoneNumber } = req.body;
@@ -83,7 +73,6 @@ router.post('/initiate', authMiddleware, async (req: AuthRequest, res: Response)
       return res.status(400).json({ error: 'Phone number is required for mobile payment' });
     }
 
-    // Validate phone format
     if (phoneNumber) {
       const cleaned = phoneNumber.replace(/\s+/g, '');
       if (!/^(\+?254|0)\d{9}$/.test(cleaned)) {
@@ -94,7 +83,6 @@ router.post('/initiate', authMiddleware, async (req: AuthRequest, res: Response)
     const reference = generateRef();
 
     if (paymentMethod === 'mpesa') {
-      // ---- Real M-Pesa STK Push ----
       const mpesaResponse = await stkPush({
         phoneNumber,
         amount,
@@ -108,40 +96,46 @@ router.post('/initiate', authMiddleware, async (req: AuthRequest, res: Response)
         });
       }
 
-      // Persist payment to DB
-      const payment = await Payment.create({
-        userId: req.userId,
-        amount,
-        method: 'mpesa',
-        phoneNumber: normalizePhone(phoneNumber),
-        reference,
-        status: 'pending',
-        merchantRequestId: mpesaResponse.MerchantRequestID,
-        checkoutRequestId: mpesaResponse.CheckoutRequestID,
+      const payment = await prisma.payment.create({
+        data: {
+          userId: req.userId,
+          amount,
+          method: 'mpesa',
+          reference,
+          status: 'pending',
+          metadata: {
+            phoneNumber: normalizePhone(phoneNumber),
+            merchantRequestId: mpesaResponse.MerchantRequestID,
+            checkoutRequestId: mpesaResponse.CheckoutRequestID,
+          },
+        },
       });
 
       console.log(`[M-Pesa] STK Push sent → ${phoneNumber} | KES ${amount} | CheckoutReqID: ${mpesaResponse.CheckoutRequestID}`);
 
       return res.json({
-        paymentId: payment._id,
+        paymentId: payment.id,
         reference,
         status: 'pending',
         message: `STK push sent to ${phoneNumber}. Enter your M-Pesa PIN to confirm.`,
       });
     }
 
-    // Fallback for non-mpesa methods (airtel / card) — placeholder
-    const payment = await Payment.create({
-      userId: req.userId,
-      amount,
-      method: paymentMethod,
-      phoneNumber: phoneNumber ? normalizePhone(phoneNumber) : '',
-      reference,
-      status: 'pending',
+    const payment = await prisma.payment.create({
+      data: {
+        userId: req.userId,
+        amount,
+        method: paymentMethod,
+        reference,
+        status: 'pending',
+        metadata: {
+          phoneNumber: phoneNumber ? normalizePhone(phoneNumber) : '',
+        },
+      },
     });
 
     res.json({
-      paymentId: payment._id,
+      paymentId: payment.id,
       reference,
       status: 'pending',
       message:
@@ -155,96 +149,96 @@ router.post('/initiate', authMiddleware, async (req: AuthRequest, res: Response)
   }
 });
 
-// ---------------------------------------------------------------------------
 // GET /status/:paymentId — poll payment status
-// ---------------------------------------------------------------------------
 router.get('/status/:paymentId', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { paymentId } = req.params;
-    const payment = await Payment.findById(paymentId);
+    const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
 
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found', status: 'failed' });
     }
 
-    if (payment.userId.toString() !== req.userId) {
+    if (payment.userId !== req.userId) {
       return res.status(403).json({ error: 'Unauthorized', status: 'failed' });
     }
 
-    // If still pending, try querying Safaricom for updated status
-    if (payment.status === 'pending' && payment.method === 'mpesa' && payment.checkoutRequestId) {
+    const meta = (payment.metadata as Record<string, any>) || {};
+
+    if (payment.status === 'pending' && payment.method === 'mpesa' && meta.checkoutRequestId) {
       try {
-        const queryResult = await stkQuery(payment.checkoutRequestId);
+        const queryResult = await stkQuery(meta.checkoutRequestId);
         const resultCode = String(queryResult.ResultCode);
 
         if (resultCode === '0') {
-          // Successful payment
-          payment.status = 'completed';
-          payment.resultCode = 0;
-          payment.resultDesc = queryResult.ResultDesc;
-          await payment.save();
+          await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: 'completed',
+              metadata: { ...meta, resultCode: 0, resultDesc: queryResult.ResultDesc },
+            },
+          });
           console.log(`[STK Query] Payment ${payment.reference} completed`);
         } else if (['1032', '1037', '1025', '1', '2001'].includes(resultCode)) {
-          // Definite failures: 1032=cancelled, 1037=timeout, 1025=limit, 1=insufficient, 2001=wrong pin
-          payment.status = 'failed';
-          payment.resultCode = Number(resultCode);
-          payment.resultDesc = queryResult.ResultDesc;
-          await payment.save();
+          await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: 'failed',
+              metadata: { ...meta, resultCode: Number(resultCode), resultDesc: queryResult.ResultDesc },
+            },
+          });
           console.log(`[STK Query] Payment ${payment.reference} failed: ${queryResult.ResultDesc}`);
         }
-        // Any other code — keep as pending (still processing)
       } catch (queryErr: any) {
-        // Safaricom returns HTTP errors when transaction is still processing — keep pending
         const errData = queryErr?.response?.data;
         const errMsg = errData?.errorMessage || errData?.ResultDesc || '';
         console.log(`[STK Query] Payment ${payment.reference} still processing: ${errMsg}`);
       }
 
-      // Check timeout (3 minutes)
       const elapsed = Date.now() - new Date(payment.createdAt).getTime();
       if (elapsed > 180000 && payment.status === 'pending') {
-        payment.status = 'failed';
-        payment.resultDesc = 'Payment timed out';
-        await payment.save();
+        await prisma.payment.update({
+          where: { id: payment.id },
+          data: { status: 'failed', metadata: { ...meta, resultDesc: 'Payment timed out' } },
+        });
       }
     }
 
-    // If completed, credit the account
-    if (payment.status === 'completed') {
-      await creditUserAccount(payment.userId.toString(), payment);
+    // Re-fetch updated payment
+    const updatedPayment = await prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!updatedPayment) return res.status(404).json({ error: 'Payment not found', status: 'failed' });
+    const updatedMeta = (updatedPayment.metadata as Record<string, any>) || {};
 
+    if (updatedPayment.status === 'completed') {
+      await creditUserAccount(updatedPayment.userId!, updatedPayment.amount, updatedPayment.reference || '');
+
+      const vc = await prisma.voiceCredit.findUnique({ where: { userId: req.userId } });
       return res.json({
         status: 'completed',
-        reference: payment.reference,
-        amount: payment.amount,
-        mpesaReceiptNumber: payment.mpesaReceiptNumber,
-        availableCredits: (await VoiceCredit.findOne({ userId: req.userId }))?.availableCredits || 0,
-        totalFunded: (await VoiceCredit.findOne({ userId: req.userId }))?.totalFunded || 0,
-        message: `KES ${payment.amount} credited successfully!`,
+        reference: updatedPayment.reference,
+        amount: updatedPayment.amount,
+        mpesaReceiptNumber: updatedMeta.mpesaReceiptNumber,
+        availableCredits: vc?.balance || 0,
+        totalFunded: vc?.balance || 0,
+        message: `KES ${updatedPayment.amount} credited successfully!`,
       });
     }
 
-    if (payment.status === 'failed') {
+    if (updatedPayment.status === 'failed') {
       return res.json({
         status: 'failed',
-        message: payment.resultDesc || 'Payment was not confirmed. Please try again.',
+        message: updatedMeta.resultDesc || 'Payment was not confirmed. Please try again.',
       });
     }
 
-    // Still pending
-    res.json({
-      status: 'pending',
-      message: 'Waiting for payment confirmation...',
-    });
+    res.json({ status: 'pending', message: 'Waiting for payment confirmation...' });
   } catch (error) {
     console.error('[Credits STATUS]', error);
     res.status(500).json({ error: 'Failed to check payment status', status: 'failed' });
   }
 });
 
-// ---------------------------------------------------------------------------
 // POST /mpesa/callback — Safaricom M-Pesa callback (PUBLIC, no auth)
-// ---------------------------------------------------------------------------
 router.post('/mpesa/callback', async (req: Request, res: Response) => {
   try {
     const { Body } = req.body;
@@ -257,45 +251,58 @@ router.post('/mpesa/callback', async (req: Request, res: Response) => {
 
     console.log(`[M-Pesa Callback] CheckoutReqID: ${CheckoutRequestID} | ResultCode: ${ResultCode} | ${ResultDesc}`);
 
-    const payment = await Payment.findOne({ checkoutRequestId: CheckoutRequestID });
+    const payment = await prisma.payment.findFirst({
+      where: {
+        metadata: {
+          path: ['checkoutRequestId'],
+          equals: CheckoutRequestID,
+        },
+      },
+    });
+
     if (!payment) {
       console.error(`[M-Pesa Callback] No payment found for CheckoutRequestID: ${CheckoutRequestID}`);
       return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
     if (payment.status !== 'pending') {
-      // Already processed (idempotency)
       return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    payment.resultCode = ResultCode;
-    payment.resultDesc = ResultDesc;
+    const meta = (payment.metadata as Record<string, any>) || {};
 
     if (ResultCode === 0) {
-      // Successful payment — extract metadata
-      payment.status = 'completed';
-
+      let mpesaReceiptNumber: string | undefined;
       if (CallbackMetadata?.Item) {
         for (const item of CallbackMetadata.Item) {
           if (item.Name === 'MpesaReceiptNumber') {
-            payment.mpesaReceiptNumber = item.Value;
+            mpesaReceiptNumber = item.Value;
           }
         }
       }
 
-      await payment.save();
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'completed',
+          metadata: { ...meta, resultCode: ResultCode, resultDesc: ResultDesc, mpesaReceiptNumber },
+        },
+      });
 
-      // Credit user account
-      await creditUserAccount(payment.userId.toString(), payment);
+      await creditUserAccount(payment.userId!, payment.amount, payment.reference || '');
 
       console.log(`[M-Pesa Callback] Payment ${payment.reference} completed — KES ${payment.amount} credited to user ${payment.userId}`);
     } else {
-      payment.status = 'failed';
-      await payment.save();
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'failed',
+          metadata: { ...meta, resultCode: ResultCode, resultDesc: ResultDesc },
+        },
+      });
       console.log(`[M-Pesa Callback] Payment ${payment.reference} failed — ${ResultDesc}`);
     }
 
-    // Safaricom expects a success acknowledgement
     res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (error) {
     console.error('[M-Pesa Callback Error]', error);
@@ -303,86 +310,43 @@ router.post('/mpesa/callback', async (req: Request, res: Response) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Helper: credit user account (idempotent via reference check)
-// ---------------------------------------------------------------------------
-async function creditUserAccount(userId: string, payment: any) {
-  let voiceCredit = await VoiceCredit.findOne({ userId });
-  if (!voiceCredit) {
-    voiceCredit = new VoiceCredit({
-      userId,
-      availableCredits: 0,
-      totalFunded: 0,
-      totalUsed: 0,
-      transactions: [],
-    });
-  }
-
-  // Idempotency: check if already credited
-  const alreadyCredited = voiceCredit.transactions.some(
-    (tx: any) => tx.reference === payment.reference && tx.type === 'fund',
-  );
-  if (alreadyCredited) return;
-
-  const newBalance = voiceCredit.availableCredits + payment.amount;
-  voiceCredit.availableCredits = newBalance;
-  voiceCredit.totalFunded += payment.amount;
-  voiceCredit.transactions.push({
-    type: 'fund',
-    amount: payment.amount,
-    balance: newBalance,
-    description: `Funded via M-Pesa${payment.phoneNumber ? ` (${payment.phoneNumber})` : ''}${payment.mpesaReceiptNumber ? ` — Receipt: ${payment.mpesaReceiptNumber}` : ''}`,
-    channel: payment.method,
-    phoneNumber: payment.phoneNumber || undefined,
-    reference: payment.reference,
-    status: 'completed',
-    date: new Date(),
-  } as any);
-  await voiceCredit.save();
+// Helper: credit user account (idempotent)
+async function creditUserAccount(userId: string, amount: number, reference: string) {
+  if (!userId) return;
+  await prisma.voiceCredit.upsert({
+    where: { userId },
+    update: { balance: { increment: amount } },
+    create: { userId, balance: amount },
+  });
 }
 
-// ---------------------------------------------------------------------------
-// POST /charge — deduct credits (used by call/whatsapp systems)
-// ---------------------------------------------------------------------------
+// POST /charge — deduct credits
 router.post('/charge', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { amount, channel, phoneNumber, duration, description } = req.body;
+    const { amount } = req.body;
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: 'Invalid charge amount' });
     }
 
-    const voiceCredit = await VoiceCredit.findOne({ userId: req.userId });
+    const voiceCredit = await prisma.voiceCredit.findUnique({ where: { userId: req.userId } });
     if (!voiceCredit) {
       return res.status(400).json({ error: 'No credit account found' });
     }
 
-    if (voiceCredit.availableCredits < amount) {
-      return res.status(400).json({ error: 'Insufficient credits', availableCredits: voiceCredit.availableCredits });
+    if (voiceCredit.balance < amount) {
+      return res.status(400).json({ error: 'Insufficient credits', availableCredits: voiceCredit.balance });
     }
 
-    const newBalance = voiceCredit.availableCredits - amount;
-    voiceCredit.availableCredits = newBalance;
-    voiceCredit.totalUsed += amount;
-    voiceCredit.transactions.push({
-      type: 'charge',
-      amount,
-      balance: newBalance,
-      description: description || `Charged for ${channel}`,
-      channel: channel || 'system',
-      phoneNumber,
-      duration,
-      reference: generateRef(),
-      status: 'completed',
-      date: new Date(),
-    } as any);
-
-    await voiceCredit.save();
+    const updated = await prisma.voiceCredit.update({
+      where: { userId: req.userId },
+      data: { balance: { decrement: amount } },
+    });
 
     res.json({
       message: 'Credits charged',
-      availableCredits: voiceCredit.availableCredits,
-      totalUsed: voiceCredit.totalUsed,
+      availableCredits: updated.balance,
+      totalUsed: 0,
     });
   } catch (error) {
     console.error('[Credits CHARGE]', error);
@@ -390,16 +354,15 @@ router.post('/charge', authMiddleware, async (req: AuthRequest, res: Response) =
   }
 });
 
-// ---------------------------------------------------------------------------
 // GET /transactions
-// ---------------------------------------------------------------------------
 router.get('/transactions', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const voiceCredit = await VoiceCredit.findOne({ userId: req.userId });
-    if (!voiceCredit) {
-      return res.json({ transactions: [] });
-    }
-    res.json({ transactions: voiceCredit.transactions });
+    const payments = await prisma.payment.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    res.json({ transactions: payments });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch transactions' });
   }

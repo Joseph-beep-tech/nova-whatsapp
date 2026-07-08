@@ -1,11 +1,12 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { restaurantService } from '../services/restaurant.service';
+import { whatsappService, WaSession } from '../services/whatsapp.service';
 import {
-  ArrowLeft, Edit, Save, X, Upload, Star, Clock, MapPin,
-  Brain, CalendarDays, MessageSquare, Settings, Mic,
+  ArrowLeft, Edit, Save, X, Upload, Star, Clock,
+  Brain, CalendarDays, MessageSquare, Settings,
   UtensilsCrossed, Wifi, WifiOff, Phone, RefreshCw,
-  ClipboardList, DollarSign,
+  ClipboardList, DollarSign, Link2, Unlink, CheckCircle2,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Restaurant } from '../types';
@@ -36,6 +37,7 @@ export default function RestaurantDetail() {
   const [form, setForm] = useState<Partial<Restaurant>>({});
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [, setLinkingSession] = useState<string | null>(null);
 
   const { data: restaurant, isLoading } = useQuery(
     ['restaurant', id],
@@ -46,6 +48,22 @@ export default function RestaurantDetail() {
   const updateMutation = useMutation(
     (data: FormData) => restaurantService.update(id!, data),
     { onSuccess: () => { qc.invalidateQueries(['restaurant', id]); setIsEditing(false); } }
+  );
+
+  const { data: waSessions = [] } = useQuery<WaSession[]>(
+    'wa-sessions',
+    () => whatsappService.getSessions(),
+  );
+
+  const linkMutation = useMutation(
+    ({ sessionId, restaurantId }: { sessionId: string; restaurantId: string | null }) =>
+      whatsappService.linkRestaurant(sessionId, restaurantId),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries('wa-sessions');
+        setLinkingSession(null);
+      },
+    }
   );
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -175,6 +193,71 @@ export default function RestaurantDetail() {
               </div>
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* WhatsApp AI Agent — session linking */}
+      <div>
+        <p className="section-label">WhatsApp AI Agent</p>
+        <div className="card space-y-3">
+          <p className="text-sm text-gray-500">
+            Link a connected WhatsApp session to this restaurant. All incoming messages on that session will be handled by the restaurant's AI — menu questions, ordering, tracking.
+          </p>
+
+          {waSessions.length === 0 ? (
+            <div className="text-sm text-gray-400 py-2">
+              No WhatsApp sessions found. Go to the{' '}
+              <button onClick={() => navigate('/whatsapp')} className="text-primary-600 underline">WhatsApp page</button>{' '}
+              to connect one first.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {waSessions.map((s) => {
+                const isLinkedHere = s.restaurantId === id;
+                const isLinkedElsewhere = s.restaurantId && s.restaurantId !== id;
+                const isConnected = s.status === 'connected';
+                return (
+                  <div key={s.sessionId} className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-colors ${isLinkedHere ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isConnected ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{s.name || s.sessionId}</p>
+                      <p className="text-xs text-gray-500">
+                        {s.phone ? `+${s.phone}` : 'No phone yet'} · {s.status}
+                        {isLinkedElsewhere && <span className="ml-1 text-amber-600">(linked to another restaurant)</span>}
+                      </p>
+                    </div>
+                    {isLinkedHere ? (
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full">
+                          <CheckCircle2 size={11} /> Active AI Agent
+                        </span>
+                        <button
+                          onClick={() => linkMutation.mutate({ sessionId: s.sessionId, restaurantId: null })}
+                          disabled={linkMutation.isLoading}
+                          className="flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg transition-colors"
+                        >
+                          <Unlink size={12} /> Unlink
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => linkMutation.mutate({ sessionId: s.sessionId, restaurantId: id! })}
+                        disabled={linkMutation.isLoading || !isConnected}
+                        className="flex items-center gap-1 text-xs text-primary-600 hover:bg-primary-50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40"
+                        title={!isConnected ? 'Session must be connected first' : ''}
+                      >
+                        <Link2 size={12} /> Link
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <p className="text-xs text-gray-400">
+            Only one session can be the active AI agent per restaurant. Linking a new session automatically replaces the previous one.
+          </p>
         </div>
       </div>
 

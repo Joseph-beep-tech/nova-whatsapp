@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
-import mongoose from 'mongoose';
-import VoiceCall from '../models/VoiceCall';
+import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 
 interface AuthRequest extends Request {
@@ -17,18 +16,19 @@ router.get('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { status, limit = '50', offset = '0' } = req.query;
 
-    const filter: any = { userId: req.userId };
+    const where: any = { userId: req.userId };
     if (status && ['completed', 'failed', 'ongoing'].includes(status as string)) {
-      filter.status = status;
+      where.status = status;
     }
 
-    const calls = await VoiceCall.find(filter)
-      .populate('promptId', 'name')
-      .sort({ createdAt: -1 })
-      .skip(Number(offset))
-      .limit(Number(limit));
+    const calls = await prisma.voiceCall.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: Number(offset),
+      take: Number(limit),
+    });
 
-    const total = await VoiceCall.countDocuments(filter);
+    const total = await prisma.voiceCall.count({ where });
 
     res.json({ calls, total });
   } catch (error) {
@@ -43,24 +43,30 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res: Response) => 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const [totalCalls, monthCalls, totalDuration, monthDuration] = await Promise.all([
-      VoiceCall.countDocuments({ userId: req.userId }),
-      VoiceCall.countDocuments({ userId: req.userId, createdAt: { $gte: monthStart } }),
-      VoiceCall.aggregate([
-        { $match: { userId: new mongoose.Types.ObjectId(req.userId) } },
-        { $group: { _id: null, total: { $sum: '$duration' } } },
-      ]),
-      VoiceCall.aggregate([
-        { $match: { userId: new mongoose.Types.ObjectId(req.userId), createdAt: { $gte: monthStart } } },
-        { $group: { _id: null, total: { $sum: '$duration' } } },
-      ]),
+    const [totalCalls, monthCalls] = await Promise.all([
+      prisma.voiceCall.count({ where: { userId: req.userId } }),
+      prisma.voiceCall.count({ where: { userId: req.userId, createdAt: { gte: monthStart } } }),
     ]);
+
+    // Aggregate duration with raw SQL
+    const durationResult = await prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COALESCE(SUM(duration), 0)::bigint as total
+      FROM "VoiceCall"
+      WHERE "userId" = ${req.userId}
+    `;
+
+    const monthDurationResult = await prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COALESCE(SUM(duration), 0)::bigint as total
+      FROM "VoiceCall"
+      WHERE "userId" = ${req.userId}
+        AND "createdAt" >= ${monthStart}
+    `;
 
     res.json({
       totalCalls,
       callsThisMonth: monthCalls,
-      totalDuration: totalDuration[0]?.total || 0,
-      monthDuration: monthDuration[0]?.total || 0,
+      totalDuration: Number(durationResult[0]?.total ?? 0),
+      monthDuration: Number(monthDurationResult[0]?.total ?? 0),
     });
   } catch (error) {
     console.error('[CallHistory STATS]', error);
@@ -71,16 +77,16 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res: Response) => 
 // POST / — create a new call record (call started)
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { phoneNumber, promptId, callSid } = req.body;
+    const { phoneNumber, callSid } = req.body;
 
-    const call = await VoiceCall.create({
-      userId: req.userId,
-      phoneNumber: phoneNumber || 'browser',
-      promptId: promptId || undefined,
-      callSid: callSid || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      status: 'ongoing',
-      duration: 0,
-      cost: 0,
+    const call = await prisma.voiceCall.create({
+      data: {
+        userId: req.userId,
+        from: phoneNumber || 'browser',
+        to: 'local',
+        status: 'ongoing',
+        duration: 0,
+      },
     });
 
     res.status(201).json(call);
@@ -90,23 +96,27 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// PUT /:id — update a call record (call ended or in progress)
+// PUT /:id — update a call record
 router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { duration, cost, status, transcript } = req.body;
+    const { duration, status } = req.body;
 
-    const call = await VoiceCall.findOne({ _id: req.params.id, userId: req.userId });
+    const call = await prisma.voiceCall.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
     if (!call) {
       return res.status(404).json({ error: 'Call not found' });
     }
 
-    if (duration !== undefined) call.duration = duration;
-    if (cost !== undefined) call.cost = cost;
-    if (status) call.status = status;
-    if (transcript) call.transcript = transcript;
+    const updateData: any = {};
+    if (duration !== undefined) updateData.duration = duration;
+    if (status) updateData.status = status;
 
-    await call.save();
-    res.json(call);
+    const updated = await prisma.voiceCall.update({
+      where: { id: req.params.id },
+      data: updateData,
+    });
+    res.json(updated);
   } catch (error) {
     console.error('[CallHistory PUT]', error);
     res.status(500).json({ error: 'Failed to update call record' });
@@ -116,8 +126,9 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
 // GET /:id — single call detail
 router.get('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const call = await VoiceCall.findOne({ _id: req.params.id, userId: req.userId })
-      .populate('promptId', 'name');
+    const call = await prisma.voiceCall.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
 
     if (!call) {
       return res.status(404).json({ error: 'Call not found' });

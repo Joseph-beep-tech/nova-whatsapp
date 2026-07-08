@@ -12,7 +12,7 @@ import {
   ArrowLeft, Plus, Trash2, RefreshCw, Search, FileText,
   CheckCircle2, AlertCircle, Clock, Upload, X, ChevronDown,
   ChevronUp, Bot, Zap, MapPin, HelpCircle, Tag, Star,
-  BookOpen, DollarSign, Mic,
+  BookOpen, DollarSign,
 } from 'lucide-react';
 
 const DOC_TYPES = [

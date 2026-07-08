@@ -12,7 +12,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const twilio = require('twilio');
 
-import AICredentials from '../models/AICredentials';
+import { prisma } from '../lib/prisma';
 import { decrypt } from '../utils/credentialsCrypto';
 
 export class TwilioNotConfiguredError extends Error {
@@ -33,14 +33,14 @@ interface AvailableNumber {
 
 class TwilioServiceImpl {
   async hasCredentials(userId: string): Promise<boolean> {
-    const creds = await AICredentials.findOne({ userId });
+    const creds = await prisma.aICredentials.findFirst({ where: { userId } });
     if (!creds?.twilioAccountSid) return false;
     if (!creds?.twilioAuthToken) return false;
     return true;
   }
 
   private async getClient(userId: string) {
-    const creds = await AICredentials.findOne({ userId });
+    const creds = await prisma.aICredentials.findFirst({ where: { userId } });
     if (!creds?.twilioAccountSid || !creds?.twilioAuthToken) throw new TwilioNotConfiguredError();
     const sid = creds.twilioAccountSid; // SID is plain text (PLAIN_FIELDS)
     const token = decrypt(creds.twilioAuthToken);

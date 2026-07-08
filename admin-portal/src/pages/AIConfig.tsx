@@ -9,10 +9,35 @@ import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { aiConfigService } from '../services/restaurantAI.service';
 import { restaurantService } from '../services/restaurant.service';
 import {
-  ArrowLeft, Save, Bot, Mic, MessageSquare, CreditCard,
-  Settings, Globe, CheckCircle2, RefreshCw, AlertCircle,
-  Info, Zap, ChevronDown, ChevronUp,
+  ArrowLeft, Save, Mic, MessageSquare, CreditCard,
+  Settings, CheckCircle2, RefreshCw,
+  Info, Zap, ChevronDown, ChevronUp, Plus, Trash2, TrendingUp,
 } from 'lucide-react';
+
+interface UpsellRule { triggerItem: string; suggestItem: string; message?: string }
+
+interface AIConfigForm {
+  voiceEnabled?: boolean;
+  voicePersona?: string;
+  voiceLanguages?: string[];
+  voiceGreeting?: string;
+  voiceFallbackMessage?: string;
+  waEnabled?: boolean;
+  waPersona?: string;
+  waGreeting?: string;
+  waOrderConfirmationMsg?: string;
+  waDeliveryUpdateMsg?: string;
+  autoConfirmOrders?: boolean;
+  maxOrdersPerHour?: number;
+  orderClosingTime?: string;
+  upsellRules?: UpsellRule[];
+  ragEnabled?: boolean;
+  ragTopK?: number;
+  ragScoreThreshold?: number;
+  mpesaEnabled?: boolean;
+  mpesaPaybill?: string;
+  mpesaTillNumber?: string;
+}
 
 const LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -26,6 +51,7 @@ const SECTIONS: Section[] = [
   { id: 'voice',    label: 'Voice AI',        icon: Mic },
   { id: 'wa',       label: 'WhatsApp Bot',    icon: MessageSquare },
   { id: 'ordering', label: 'Ordering Rules',  icon: Settings },
+  { id: 'upsell',   label: 'Upsell Engine',   icon: TrendingUp },
   { id: 'rag',      label: 'RAG Settings',    icon: Zap },
   { id: 'mpesa',    label: 'M-Pesa',          icon: CreditCard },
 ];
@@ -45,11 +71,11 @@ export default function AIConfig() {
     { enabled: !!restaurantId }
   );
 
-  const [form, setForm] = useState<Record<string, any>>({});
-  useEffect(() => { if (config) setForm(config); }, [config]);
+  const [form, setForm] = useState<AIConfigForm>({});
+  useEffect(() => { if (config) setForm(config as AIConfigForm); }, [config]);
 
   const updateMutation = useMutation(
-    (data: Record<string, any>) => aiConfigService.update(restaurantId!, data),
+    (data: AIConfigForm) => aiConfigService.update(restaurantId!, data),
     {
       onSuccess: () => {
         qc.invalidateQueries(['aiConfig', restaurantId]);
@@ -59,7 +85,7 @@ export default function AIConfig() {
     }
   );
 
-  const set = (key: string, value: any) => setForm((f) => ({ ...f, [key]: value }));
+  const set = (key: string, value: unknown) => setForm((f) => ({ ...f, [key]: value }));
 
   const toggleLang = (code: string) => {
     const langs: string[] = form.voiceLanguages || [];
@@ -199,6 +225,63 @@ export default function AIConfig() {
                   </>
                 )}
 
+                {/* ── UPSELL ── */}
+                {section.id === 'upsell' && (
+                  <>
+                    <p className="text-xs text-gray-500">
+                      When a customer adds a trigger item to their cart, the AI will naturally suggest the paired item. Keep it to 3–5 rules max for best results.
+                    </p>
+                    <div className="space-y-2">
+                      {((form.upsellRules || []) as Array<{ triggerItem: string; suggestItem: string; message?: string }>).map((rule, i) => (
+                        <div key={i} className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl">
+                          <div className="flex-1 grid grid-cols-2 gap-2">
+                            <input
+                              className="input-field text-sm"
+                              placeholder="Trigger item (e.g. Burger)"
+                              value={rule.triggerItem}
+                              onChange={(e) => {
+                                const rules = [...(form.upsellRules || [])];
+                                rules[i] = { ...rules[i], triggerItem: e.target.value };
+                                set('upsellRules', rules);
+                              }}
+                            />
+                            <input
+                              className="input-field text-sm"
+                              placeholder="Suggest (e.g. Hand-cut Fries)"
+                              value={rule.suggestItem}
+                              onChange={(e) => {
+                                const rules = [...(form.upsellRules || [])];
+                                rules[i] = { ...rules[i], suggestItem: e.target.value };
+                                set('upsellRules', rules);
+                              }}
+                            />
+                          </div>
+                          <button
+                            onClick={() => {
+                              const rules = [...(form.upsellRules || [])];
+                              rules.splice(i, 1);
+                              set('upsellRules', rules);
+                            }}
+                            className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg shrink-0"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => set('upsellRules', [...(form.upsellRules || []), { triggerItem: '', suggestItem: '', message: '' }])}
+                      className="flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      <Plus size={15} /> Add Upsell Rule
+                    </button>
+                    <div className="bg-amber-50 rounded-lg p-3 text-xs text-amber-700 flex gap-2">
+                      <Info size={14} className="shrink-0 mt-0.5" />
+                      The AI applies these rules naturally in conversation — it will never aggressively push items. Rules are suggestions, not scripts.
+                    </div>
+                  </>
+                )}
+
                 {/* ── RAG ── */}
                 {section.id === 'rag' && (
                   <>
@@ -254,7 +337,7 @@ export default function AIConfig() {
 }
 
 // ── Small helpers ──────────────────────────────────────────────────────────────
-function Toggle({ label, value, onChange, hint }: { label: string; value: boolean; onChange: (v: boolean) => void; hint?: string; }) {
+function Toggle({ label, value = false, onChange, hint }: { label: string; value?: boolean; onChange: (v: boolean) => void; hint?: string; }) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div>

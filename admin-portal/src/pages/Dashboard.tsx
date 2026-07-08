@@ -4,9 +4,9 @@ import { orderService } from '../services/order.service';
 import { riderService } from '../services/rider.service';
 import { paymentService } from '../services/payment.service';
 import {
-  ShoppingCart, DollarSign, TrendingUp, AlertCircle, Users,
-  Clock, Bell, Store, Bike, ArrowUpRight, ArrowDownRight,
-  CheckCircle2, XCircle, Loader2, Zap, Utensils,
+  ShoppingCart, DollarSign, TrendingUp, AlertCircle,
+  Bell, Store, Bike, ArrowUpRight, ArrowDownRight,
+  CheckCircle2, Zap, Utensils,
 } from 'lucide-react';
 import { OrderStatus } from '../types';
 import { useMemo, useState, useEffect } from 'react';

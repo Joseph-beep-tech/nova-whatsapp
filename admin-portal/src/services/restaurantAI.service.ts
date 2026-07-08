@@ -53,6 +53,25 @@ export const aiLogService = {
   },
 };
 
+// ── Restaurant Analytics ───────────────────────────────────────────────────────
+export const restaurantAnalyticsService = {
+  async getPopularItems(restaurantId: string) {
+    const r = await api.get(`/api/restaurant-ai/analytics/${restaurantId}/popular-items`);
+    return r.data as Array<{ name: string; totalQty: number; totalRevenue: number }>;
+  },
+  async getDemand(restaurantId: string) {
+    const r = await api.get(`/api/restaurant-ai/analytics/${restaurantId}/demand`);
+    return r.data as Array<{ hour: number; dayOfWeek: number; orders: number; revenue: number }>;
+  },
+  async getCustomers(restaurantId: string) {
+    const r = await api.get(`/api/restaurant-ai/analytics/${restaurantId}/customers`);
+    return r.data as {
+      topCustomers: Array<{ phone: string; customerName: string; orderCount: number; totalSpend: number; avgOrderValue: number }>;
+      last30Days: { uniqueCustomers: number; returningCustomers: number; newCustomers: number; retentionRate: number };
+    };
+  },
+};
+
 // ── Reservations ───────────────────────────────────────────────────────────────
 export const reservationService = {
   async getAll(restaurantId: string, params?: Record<string, any>) {

@@ -24,13 +24,14 @@ router.get('/sessions', authMiddleware, async (req: AuthRequest, res: Response) 
 // Create a new session and start the underlying engine client
 router.post('/sessions', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { name, promptId } = req.body || {};
-    const runtime = await whatsappEngine.createSession(req.userId!, name || '', promptId || null);
+    const { name, promptId, restaurantId } = req.body || {};
+    const runtime = await whatsappEngine.createSession(req.userId!, name || '', promptId || null, restaurantId || null);
     res.status(201).json({
-      sessionId: runtime.sessionId,
-      status: runtime.status,
-      name: name || '',
-      promptId: promptId || null,
+      sessionId:    runtime.sessionId,
+      status:       runtime.status,
+      name:         name         || '',
+      promptId:     promptId     || null,
+      restaurantId: restaurantId || null,
     });
   } catch (err) {
     console.error('[whatsapp][create] error:', err);
@@ -83,6 +84,19 @@ router.delete('/sessions/:sessionId', authMiddleware, async (req: AuthRequest, r
   } catch (err) {
     console.error('[whatsapp][destroy] error:', err);
     res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+// Link or unlink a session to a restaurant AI agent
+router.patch('/sessions/:sessionId/restaurant', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { restaurantId } = req.body || {};
+    const ok = await whatsappEngine.linkRestaurant(req.userId!, req.params.sessionId, restaurantId || null);
+    if (!ok) return res.status(404).json({ error: 'Session not found' });
+    res.json({ ok: true, restaurantId: restaurantId || null });
+  } catch (err) {
+    console.error('[whatsapp][link-restaurant] error:', err);
+    res.status(500).json({ error: 'Failed to link restaurant' });
   }
 });
 

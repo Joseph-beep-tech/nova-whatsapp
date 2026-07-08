@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { restaurantService } from '../services/restaurant.service';
 import { Plus, Edit, Trash2, Eye, Search, Star, Clock, MapPin, Wifi, WifiOff, ChevronRight, MoreVertical, Brain, CalendarDays } from 'lucide-react';
 import { useState } from 'react';
@@ -18,9 +18,7 @@ const CUISINE_COLORS: Record<string, string> = {
 
 export default function Restaurants() {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const { data: restaurants = [], isLoading } = useQuery('restaurants', restaurantService.getAll);

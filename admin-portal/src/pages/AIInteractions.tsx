@@ -10,8 +10,7 @@ import { aiLogService } from '../services/restaurantAI.service';
 import { restaurantService } from '../services/restaurant.service';
 import {
   ArrowLeft, MessageSquare, Mic, Bot, AlertTriangle,
-  ChevronDown, ChevronUp, Search, Filter, BarChart2,
-  TrendingUp, Zap, Users,
+  ChevronDown, ChevronUp, TrendingUp, Zap,
 } from 'lucide-react';
 
 const INTENT_COLORS: Record<string, string> = {
@@ -178,7 +177,7 @@ export default function AIInteractions() {
                           {log.retrievedChunks.map((c, i) => (
                             <div key={i} className="bg-blue-50 rounded-lg p-2.5 text-xs">
                               <div className="flex justify-between mb-1">
-                                <span className="font-medium text-blue-700">Chunk {c.chunkIndex}</span>
+                                <span className="font-medium text-blue-700">Chunk {i + 1}</span>
                                 <span className="text-blue-600">{(c.score * 100).toFixed(1)}% match</span>
                               </div>
                               <p className="text-gray-700">{c.snippet}</p>

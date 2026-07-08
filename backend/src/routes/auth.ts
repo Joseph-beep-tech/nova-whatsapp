@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import User from '../models/User';
+import bcrypt from 'bcryptjs';
+import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 
 interface AuthRequest extends Request {
@@ -10,67 +10,67 @@ interface AuthRequest extends Request {
 
 const router = Router();
 
-// Demo login - creates a real DB user so all routes work with proper ObjectIds
+// Demo login - creates a real DB user so all routes work
 router.post('/demo-login', async (req: AuthRequest, res: Response) => {
   try {
     const email = req.body?.email || 'demo@azizi.local';
-
     console.log('[Demo Login] Request received for:', email);
 
-    // If MongoDB is connected, create/find a real user
-    if (mongoose.connection.readyState === 1) {
-      let user = await User.findOne({ email });
+    try {
+      let user = await prisma.user.findUnique({ where: { email } });
 
       if (!user) {
-        user = new User({
-          email,
-          password: 'demo-password-' + Date.now(), // hashed by pre-save hook
-          firstName: 'Demo',
-          lastName: 'User',
-          role: 'admin',
+        const hashed = await bcrypt.hash('demo-password-' + Date.now(), 10);
+        user = await prisma.user.create({
+          data: {
+            email,
+            password: hashed,
+            firstName: 'Demo',
+            lastName: 'User',
+            role: 'admin',
+          },
         });
-        await user.save();
         console.log('[Demo Login] Created new demo user in DB');
       }
 
       const token = jwt.sign(
-        { userId: user._id, email: user.email },
+        { userId: user.id, email: user.email },
         process.env.JWT_SECRET || 'secret',
         { expiresIn: '7d' }
       );
 
-      console.log('[Demo Login] Token generated with DB userId:', user._id);
+      console.log('[Demo Login] Token generated with DB userId:', user.id);
 
       return res.json({
         token,
         user: {
-          id: user._id,
+          id: user.id,
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
         },
       });
+    } catch (dbError: any) {
+      // Fallback: no database — use stable string ID
+      const stableId = 'demo-' + email.replace(/[^a-zA-Z0-9]/g, '_');
+      const token = jwt.sign(
+        { userId: stableId, email },
+        process.env.JWT_SECRET || 'secret',
+        { expiresIn: '7d' }
+      );
+
+      console.log('[Demo Login] Token generated (no DB) with stableId:', stableId);
+
+      return res.json({
+        token,
+        user: {
+          id: stableId,
+          email,
+          firstName: 'Demo',
+          lastName: 'User',
+        },
+      });
     }
-
-    // Fallback: no database — use stable string ID
-    const stableId = 'demo-' + email.replace(/[^a-zA-Z0-9]/g, '_');
-    const token = jwt.sign(
-      { userId: stableId, email },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    );
-
-    console.log('[Demo Login] Token generated (no DB) with stableId:', stableId);
-
-    res.json({
-      token,
-      user: {
-        id: stableId,
-        email,
-        firstName: 'Demo',
-        lastName: 'User',
-      },
-    });
   } catch (error: any) {
     console.error('[Demo Login] Error:', error);
     res.status(500).json({ error: 'Demo login failed: ' + error.message });
@@ -91,22 +91,23 @@ router.post('/register', async (req: AuthRequest, res: Response) => {
     }
 
     try {
-      const existingUser = await User.findOne({ email });
+      const existingUser = await prisma.user.findUnique({ where: { email } });
       if (existingUser) {
         return res.status(400).json({ error: 'Email already registered' });
       }
 
-      const user = new User({
-        email,
-        password,
-        firstName,
-        lastName,
+      const hashed = await bcrypt.hash(password, 10);
+      const user = await prisma.user.create({
+        data: {
+          email,
+          password: hashed,
+          firstName,
+          lastName,
+        },
       });
 
-      await user.save();
-
       const token = jwt.sign(
-        { userId: user._id, email: user.email },
+        { userId: user.id, email: user.email },
         process.env.JWT_SECRET || 'secret',
         { expiresIn: '7d' }
       );
@@ -114,14 +115,14 @@ router.post('/register', async (req: AuthRequest, res: Response) => {
       res.status(201).json({
         token,
         user: {
-          id: user._id,
+          id: user.id,
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
         },
       });
     } catch (dbError: any) {
-      if (dbError.name === 'MongooseError' || dbError.message.includes('ECONNREFUSED')) {
+      if (dbError.message?.includes('ECONNREFUSED')) {
         return res.status(503).json({ error: 'Database connection failed. Please try again later.' });
       }
       throw dbError;
@@ -142,18 +143,18 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
     }
 
     try {
-      const user = await User.findOne({ email }).select('+password');
+      const user = await prisma.user.findUnique({ where: { email } });
       if (!user) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
-      const passwordMatch = await user.comparePassword(password);
+      const passwordMatch = await bcrypt.compare(password, user.password);
       if (!passwordMatch) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
       const token = jwt.sign(
-        { userId: user._id, email: user.email },
+        { userId: user.id, email: user.email },
         process.env.JWT_SECRET || 'secret',
         { expiresIn: '7d' }
       );
@@ -161,14 +162,14 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       res.json({
         token,
         user: {
-          id: user._id,
+          id: user.id,
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
         },
       });
     } catch (dbError: any) {
-      if (dbError.name === 'MongooseError' || dbError.message.includes('ECONNREFUSED')) {
+      if (dbError.message?.includes('ECONNREFUSED')) {
         return res.status(503).json({ error: 'Database connection failed. Please try again later.' });
       }
       throw dbError;
@@ -179,7 +180,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Keycloak token exchange — frontend sends the authorization code
+// Keycloak token exchange
 router.post('/keycloak', async (req: AuthRequest, res: Response) => {
   try {
     const { code, redirectUri } = req.body;
@@ -193,7 +194,6 @@ router.post('/keycloak', async (req: AuthRequest, res: Response) => {
     const clientId = process.env.KEYCLOAK_CLIENT_ID || 'azizi-voice-portal';
     const clientSecret = process.env.KEYCLOAK_CLIENT_SECRET || '';
 
-    // Exchange code for tokens
     const tokenUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/token`;
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -217,7 +217,6 @@ router.post('/keycloak', async (req: AuthRequest, res: Response) => {
 
     const tokens: any = await tokenResponse.json();
 
-    // Get user info from Keycloak
     const userInfoUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/userinfo`;
     const userInfoResponse = await fetch(userInfoUrl, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -236,23 +235,23 @@ router.post('/keycloak', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'No email found in Keycloak user info' });
     }
 
-    // Find or create local user
-    let user = await User.findOne({ email });
+    let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      user = new User({
-        email,
-        password: 'keycloak-' + Date.now(), // placeholder, won't be used for login
-        firstName,
-        lastName,
-        role: 'user',
+      const hashed = await bcrypt.hash('keycloak-' + Date.now(), 10);
+      user = await prisma.user.create({
+        data: {
+          email,
+          password: hashed,
+          firstName,
+          lastName,
+          role: 'user',
+        },
       });
-      await user.save();
       console.log('[Keycloak] Created new user:', email);
     }
 
-    // Issue our own JWT
     const token = jwt.sign(
-      { userId: user._id, email: user.email },
+      { userId: user.id, email: user.email },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
@@ -260,7 +259,7 @@ router.post('/keycloak', async (req: AuthRequest, res: Response) => {
     res.json({
       token,
       user: {
-        id: user._id,
+        id: user.id,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
@@ -275,12 +274,12 @@ router.post('/keycloak', async (req: AuthRequest, res: Response) => {
 // Get current user
 router.get('/me', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await User.findById(req.userId);
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     res.json({
-      id: user._id,
+      id: user.id,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,

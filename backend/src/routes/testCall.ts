@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import AICredentials from '../models/AICredentials';
-import Prompt from '../models/Prompt';
+import { prisma } from '../lib/prisma';
+import { decrypt } from '../utils/credentialsCrypto';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 interface AuthRequest extends Request {
   userId?: string;
@@ -12,25 +14,22 @@ interface AuthRequest extends Request {
 
 const router = Router();
 
-// --- Decrypt credentials (same logic as credentials route) ---
-
-function getEncryptionKey(): Buffer {
-  const secret = process.env.CREDENTIALS_ENCRYPTION_KEY || process.env.JWT_SECRET || 'secret';
-  return crypto.scryptSync(secret, 'azizi-salt', 32);
-}
-
-function decrypt(encoded: string): string {
-  if (!encoded || !encoded.includes(':')) return encoded;
-  try {
-    const [ivHex, authTagHex, dataHex] = encoded.split(':');
-    const key = getEncryptionKey();
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
-    decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
-    const decrypted = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
-    return decrypted.toString('utf8');
-  } catch {
-    return '';
+// Helper to read credentials from file
+function getDecryptedCredentials(userId: string): Record<string, string> {
+  const DATA_DIR = path.join(__dirname, '..', '..', 'data', 'credentials');
+  const safe = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const fp = path.join(DATA_DIR, `${safe}.json`);
+  if (!fs.existsSync(fp)) return {};
+  const raw = JSON.parse(fs.readFileSync(fp, 'utf-8'));
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string' && v.includes(':')) {
+      result[k] = decrypt(v);
+    } else if (typeof v === 'string') {
+      result[k] = v;
+    }
   }
+  return result;
 }
 
 // POST /api/test-call/session - Create an OpenAI Realtime session and return ephemeral key
@@ -38,21 +37,29 @@ router.post('/session', authMiddleware, async (req: AuthRequest, res: Response) 
   try {
     const { promptId } = req.body;
 
-    // Get user's OpenAI API key
-    const creds = await AICredentials.findOne({ userId: req.userId });
-    if (!creds || !creds.openaiApiKey) {
-      return res.status(400).json({ error: 'OpenAI API key not configured. Go to AI Credentials to set it up.' });
+    // Get user's OpenAI API key from Prisma or file storage
+    let apiKey = '';
+    const creds = await prisma.aICredentials.findUnique({ where: { userId: req.userId } });
+    if (creds?.openaiApiKey) {
+      apiKey = decrypt(creds.openaiApiKey);
     }
 
-    const apiKey = decrypt(creds.openaiApiKey);
     if (!apiKey) {
-      return res.status(400).json({ error: 'Failed to decrypt OpenAI API key. Please re-save your credentials.' });
+      // Fallback to file storage
+      const fileCreds = getDecryptedCredentials(req.userId!);
+      apiKey = fileCreds.openaiApiKey || '';
+    }
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'OpenAI API key not configured. Go to AI Credentials to set it up.' });
     }
 
     // Get prompt instructions if provided
     let instructions = 'You are a helpful voice assistant. Be concise and friendly.';
     if (promptId) {
-      const prompt = await Prompt.findOne({ _id: promptId, userId: req.userId });
+      const prompt = await prisma.prompt.findFirst({
+        where: { id: promptId, userId: req.userId },
+      });
       if (prompt) {
         instructions = prompt.content;
       }

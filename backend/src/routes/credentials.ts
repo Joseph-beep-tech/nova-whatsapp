@@ -2,8 +2,6 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import fs from 'fs';
 import path from 'path';
-import mongoose from 'mongoose';
-import AICredentials from '../models/AICredentials';
 import { encrypt, decrypt } from '../utils/credentialsCrypto';
 
 interface AuthRequest extends Request {
@@ -15,7 +13,7 @@ interface AuthRequest extends Request {
 
 const router = Router();
 
-// --- Storage ---
+// --- Storage (file-based) ---
 
 const DATA_DIR = path.join(__dirname, '..', '..', 'data', 'credentials');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -23,10 +21,6 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 function filePath(userId: string): string {
   const safe = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
   return path.join(DATA_DIR, `${safe}.json`);
-}
-
-function isMongoConnected(): boolean {
-  return mongoose.connection.readyState === 1;
 }
 
 const EMPTY_RECORD: Record<string, string> = {
@@ -40,24 +34,6 @@ const EMPTY_RECORD: Record<string, string> = {
 };
 
 async function loadStored(userId: string): Promise<Record<string, string>> {
-  if (isMongoConnected()) {
-    const doc = await AICredentials.findOne({ userId });
-    if (doc) {
-      return {
-        openaiApiKey: doc.openaiApiKey || '',
-        openaiSigningSecret: doc.openaiSigningSecret || '',
-        openaiProjectId: doc.openaiProjectId || '',
-        gcpServiceAccount: typeof doc.gcpServiceAccount === 'object' && Object.keys(doc.gcpServiceAccount).length > 0
-          ? JSON.stringify(doc.gcpServiceAccount)
-          : (typeof doc.gcpServiceAccount === 'string' ? doc.gcpServiceAccount : ''),
-        gcpDriveFolderId: doc.gcpDriveFolderId || '',
-        twilioAccountSid: doc.twilioAccountSid || '',
-        twilioAuthToken: doc.twilioAuthToken || '',
-      };
-    }
-    return { ...EMPTY_RECORD };
-  }
-
   const fp = filePath(userId);
   if (fs.existsSync(fp)) {
     const raw = JSON.parse(fs.readFileSync(fp, 'utf-8'));
@@ -75,24 +51,6 @@ async function loadStored(userId: string): Promise<Record<string, string>> {
 }
 
 async function saveStored(userId: string, data: Record<string, string>): Promise<void> {
-  if (isMongoConnected()) {
-    // For MongoDB, convert gcpServiceAccount JSON string back to object
-    const toSave: Record<string, any> = { ...data };
-    if (toSave.gcpServiceAccount && typeof toSave.gcpServiceAccount === 'string') {
-      try {
-        toSave.gcpServiceAccount = JSON.parse(toSave.gcpServiceAccount);
-      } catch {
-        // keep as string if not valid JSON
-      }
-    }
-    await AICredentials.findOneAndUpdate(
-      { userId },
-      { $set: toSave },
-      { upsert: true, new: true }
-    );
-    return;
-  }
-
   const fp = filePath(userId);
   let existing: Record<string, any> = {};
   if (fs.existsSync(fp)) {
@@ -154,7 +112,7 @@ function maskJson(value: string): string {
         if (key === 'private_key' || key === 'private_key_id') {
           masked[key] = mask(val);
         } else {
-          masked[key] = val; // show non-secret fields as-is
+          masked[key] = val;
         }
       } else {
         masked[key] = val;

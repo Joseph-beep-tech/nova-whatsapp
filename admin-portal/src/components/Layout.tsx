@@ -2,9 +2,8 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth.service';
 import {
   LayoutDashboard, Store, ShoppingCart, CreditCard, Navigation,
-  UsersRound, BarChart2, LogOut, Menu as MenuIcon, Shield,
-  MessageSquare, CalendarDays, Brain, ChevronDown, Bell,
-  Search, Settings, Bike,
+  BarChart2, LogOut, Menu as MenuIcon, Shield,
+  MessageSquare, ChevronDown, Bell, Bike,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -98,7 +97,7 @@ export default function Layout() {
                       >
                         <Icon size={16} className="shrink-0" />
                         <span className="flex-1">{item.label}</span>
-                        {item.dot && (
+                        {'dot' in item && item.dot && (
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                         )}
                       </Link>

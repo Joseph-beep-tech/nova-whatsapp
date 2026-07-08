@@ -1,12 +1,13 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from 'react-query';
 import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
 import { paymentService } from '../services/payment.service';
 import { riderService } from '../services/rider.service';
+import { restaurantAnalyticsService } from '../services/restaurantAI.service';
 import {
-  TrendingUp, TrendingDown, Timer, Users, Flame,
-  DollarSign, ShoppingCart, XCircle, Bike,
+  TrendingUp, TrendingDown, Timer,
+  DollarSign, ShoppingCart, XCircle, BarChart2, UserCheck, RefreshCw,
 } from 'lucide-react';
 
 function getDayKey(date: string) {
@@ -55,6 +56,24 @@ export default function Analytics() {
   const { data: restaurants = [] } = useQuery('restaurants', restaurantService.getAll);
   const { data: payments = [] } = useQuery('payments', paymentService.getAll);
   const { data: riders = [] } = useQuery('riders', riderService.getAll);
+
+  const [selectedRid, setSelectedRid] = useState<string>('');
+
+  const { data: popularItems = [], isLoading: piLoading } = useQuery(
+    ['popular-items', selectedRid],
+    () => restaurantAnalyticsService.getPopularItems(selectedRid),
+    { enabled: !!selectedRid }
+  );
+  const { data: demandData = [], isLoading: demandLoading } = useQuery(
+    ['demand', selectedRid],
+    () => restaurantAnalyticsService.getDemand(selectedRid),
+    { enabled: !!selectedRid }
+  );
+  const { data: customersData, isLoading: custLoading } = useQuery(
+    ['customers', selectedRid],
+    () => restaurantAnalyticsService.getCustomers(selectedRid),
+    { enabled: !!selectedRid }
+  );
 
   const data = useMemo(() => {
     const delivered = orders.filter((o) => o.status === 'delivered');
@@ -146,7 +165,6 @@ export default function Analytics() {
               <div className="flex items-end gap-1.5 h-28">
                 {data.last7.map(([day, rev]) => {
                   const pct = data.maxDayRev ? (rev / data.maxDayRev) * 100 : 0;
-                  const d = new Date(day);
                   return (
                     <div key={day} className="flex-1 flex flex-col items-center gap-1 group relative">
                       <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-xs rounded-lg px-2 py-1 whitespace-nowrap pointer-events-none z-10">
@@ -239,6 +257,195 @@ export default function Analytics() {
               );
             })}
           </div>
+        </div>
+      </div>
+
+      {/* ── Restaurant Intelligence ─────────────────────────────────────────────── */}
+      <div className="border-t border-border pt-6 space-y-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <BarChart2 size={18} className="text-gold-500" />
+            <h2 className="text-base font-semibold text-gray-900">Restaurant Intelligence</h2>
+          </div>
+          <select
+            value={selectedRid}
+            onChange={(e) => setSelectedRid(e.target.value)}
+            className="input text-sm py-1.5 pr-8 w-64"
+          >
+            <option value="">Select a restaurant…</option>
+            {restaurants.map((r: any) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {!selectedRid && (
+          <div className="card flex items-center justify-center h-32 text-sm text-gray-400">
+            Choose a restaurant above to see its AI-powered intelligence
+          </div>
+        )}
+
+        {selectedRid && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Popular Items */}
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <p className="section-label">Top Items (30 days)</p>
+                {piLoading && <RefreshCw size={14} className="animate-spin text-gray-400" />}
+              </div>
+              {popularItems.length === 0 && !piLoading && (
+                <p className="text-sm text-gray-400">No order data yet</p>
+              )}
+              <div className="space-y-2.5">
+                {popularItems.slice(0, 8).map((item) => (
+                  <MiniBar
+                    key={item.name}
+                    label={item.name}
+                    value={item.totalQty}
+                    max={popularItems[0]?.totalQty || 1}
+                    color="bg-gold-500"
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Demand Heatmap */}
+            <div className="card overflow-x-auto">
+              <div className="flex items-center justify-between mb-3">
+                <p className="section-label">Demand Heatmap (7 days)</p>
+                {demandLoading && <RefreshCw size={14} className="animate-spin text-gray-400" />}
+              </div>
+              {demandData.length === 0 && !demandLoading ? (
+                <p className="text-sm text-gray-400">No demand data yet</p>
+              ) : (
+                <HeatmapGrid data={demandData} />
+              )}
+            </div>
+
+            {/* Customer CLV */}
+            <div className="card lg:col-span-2">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <UserCheck size={15} className="text-blue-500" />
+                  <p className="section-label">Customer Intelligence (30 days)</p>
+                </div>
+                {custLoading && <RefreshCw size={14} className="animate-spin text-gray-400" />}
+              </div>
+
+              {customersData && (
+                <>
+                  {/* Retention summary */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                    {[
+                      { label: 'Unique Customers', value: customersData.last30Days.uniqueCustomers, color: 'text-blue-600' },
+                      { label: 'New Customers', value: customersData.last30Days.newCustomers, color: 'text-emerald-600' },
+                      { label: 'Returning', value: customersData.last30Days.returningCustomers, color: 'text-gold-600' },
+                      { label: 'Retention Rate', value: `${customersData.last30Days.retentionRate.toFixed(1)}%`, color: 'text-purple-600' },
+                    ].map((s) => (
+                      <div key={s.label} className="bg-surface rounded-xl p-3 text-center">
+                        <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Top customers table */}
+                  {customersData.topCustomers.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-gray-500 border-b border-border">
+                            <th className="pb-2 pr-4 font-medium">#</th>
+                            <th className="pb-2 pr-4 font-medium">Customer</th>
+                            <th className="pb-2 pr-4 font-medium">Phone</th>
+                            <th className="pb-2 pr-4 font-medium text-right">Orders</th>
+                            <th className="pb-2 pr-4 font-medium text-right">Total Spend</th>
+                            <th className="pb-2 font-medium text-right">Avg Order</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customersData.topCustomers.map((c, i) => (
+                            <tr key={c.phone} className="border-b border-border/50 hover:bg-surface transition-colors">
+                              <td className="py-2 pr-4 text-gray-400 font-mono text-xs">{i + 1}</td>
+                              <td className="py-2 pr-4 font-medium text-gray-900">{c.customerName || '—'}</td>
+                              <td className="py-2 pr-4 text-gray-500 font-mono text-xs">{c.phone}</td>
+                              <td className="py-2 pr-4 text-right text-gray-700">{c.orderCount}</td>
+                              <td className="py-2 pr-4 text-right font-semibold text-emerald-600">
+                                KSh {c.totalSpend.toLocaleString('en-KE', { maximumFractionDigits: 0 })}
+                              </td>
+                              <td className="py-2 text-right text-gray-600">
+                                KSh {c.avgOrderValue.toLocaleString('en-KE', { maximumFractionDigits: 0 })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {!custLoading && !customersData && (
+                <p className="text-sm text-gray-400">No customer data yet</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Heatmap helper ─────────────────────────────────────────────────────────────
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function HeatmapGrid({ data }: { data: Array<{ hour: number; dayOfWeek: number; orders: number }> }) {
+  const maxOrders = Math.max(...data.map((d) => d.orders), 1);
+  const lookup = new Map(data.map((d) => [`${d.dayOfWeek}-${d.hour}`, d.orders]));
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[420px]">
+        {/* Hour header */}
+        <div className="flex">
+          <div className="w-10 shrink-0" />
+          {HOURS.filter((h) => h % 3 === 0).map((h) => (
+            <div key={h} className="flex-1 text-center text-xs text-gray-400" style={{ minWidth: 0 }}>
+              {h}h
+            </div>
+          ))}
+        </div>
+        {/* Rows per day */}
+        {DAY_NAMES.map((day, dow) => (
+          <div key={day} className="flex items-center mt-0.5">
+            <span className="w-10 shrink-0 text-xs text-gray-500">{day}</span>
+            {HOURS.map((h) => {
+              const orders = lookup.get(`${dow}-${h}`) ?? 0;
+              const intensity = maxOrders ? orders / maxOrders : 0;
+              const bg = intensity === 0
+                ? 'bg-gray-100'
+                : intensity < 0.25 ? 'bg-gold-100'
+                : intensity < 0.5 ? 'bg-gold-300'
+                : intensity < 0.75 ? 'bg-gold-500'
+                : 'bg-gold-700';
+              return (
+                <div
+                  key={h}
+                  title={`${day} ${h}:00 — ${orders} orders`}
+                  className={`flex-1 h-5 ${bg} rounded-sm mx-px cursor-default transition-colors`}
+                  style={{ minWidth: 0 }}
+                />
+              );
+            })}
+          </div>
+        ))}
+        <div className="flex items-center gap-2 mt-2 text-xs text-gray-400">
+          <span>Low</span>
+          {['bg-gray-100','bg-gold-100','bg-gold-300','bg-gold-500','bg-gold-700'].map((c) => (
+            <div key={c} className={`w-4 h-3 rounded-sm ${c}`} />
+          ))}
+          <span>High</span>
         </div>
       </div>
     </div>

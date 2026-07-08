@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import Autopilot from '../models/Autopilot';
+import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 
 interface AuthRequest extends Request {
@@ -13,10 +13,9 @@ const router = Router();
 // GET — returns settings or defaults if not configured yet
 router.get('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    let autopilot = await Autopilot.findOne({ userId: req.userId }).populate('promptId', 'name');
+    const autopilot = await prisma.autopilot.findFirst({ where: { userId: req.userId } });
 
     if (!autopilot) {
-      // Return defaults — not saved yet
       return res.json({
         configured: false,
         enabled: false,
@@ -33,7 +32,25 @@ router.get('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    res.json({ configured: true, ...autopilot.toObject() });
+    const config = (autopilot.config as Record<string, any>) || {};
+    res.json({
+      configured: true,
+      id: autopilot.id,
+      userId: autopilot.userId,
+      enabled: autopilot.isEnabled,
+      autoReply: config.autoReply ?? true,
+      replyToGroups: config.replyToGroups ?? false,
+      replyDelaySeconds: config.replyDelaySeconds ?? 5,
+      keywordTriggers: config.keywordTriggers ?? [],
+      excludedKeywords: config.excludedKeywords ?? [],
+      businessHoursOnly: config.businessHoursOnly ?? false,
+      startTime: config.startTime ?? '09:00',
+      endTime: config.endTime ?? '18:00',
+      timezone: config.timezone ?? 'Africa/Nairobi',
+      promptId: config.promptId ?? null,
+      createdAt: autopilot.createdAt,
+      updatedAt: autopilot.updatedAt,
+    });
   } catch (error) {
     console.error('[Autopilot GET]', error);
     res.status(500).json({ error: 'Failed to fetch autopilot settings' });
@@ -57,32 +74,58 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       timezone,
     } = req.body;
 
-    let autopilot = await Autopilot.findOne({ userId: req.userId });
+    const existing = await prisma.autopilot.findFirst({ where: { userId: req.userId } });
+    const existingConfig = (existing?.config as Record<string, any>) || {};
 
-    const updates: any = {};
-    if (enabled !== undefined) updates.enabled = enabled;
-    if (autoReply !== undefined) updates.autoReply = autoReply;
-    if (replyToGroups !== undefined) updates.replyToGroups = replyToGroups;
-    if (replyDelaySeconds !== undefined) updates.replyDelaySeconds = replyDelaySeconds;
-    if (keywordTriggers !== undefined) updates.keywordTriggers = keywordTriggers;
-    if (excludedKeywords !== undefined) updates.excludedKeywords = excludedKeywords;
-    if (businessHoursOnly !== undefined) updates.businessHoursOnly = businessHoursOnly;
-    if (startTime !== undefined) updates.startTime = startTime;
-    if (endTime !== undefined) updates.endTime = endTime;
-    if (timezone !== undefined) updates.timezone = timezone;
-    if (promptId !== undefined) updates.promptId = promptId || null;
+    const newConfig: Record<string, any> = { ...existingConfig };
+    if (autoReply !== undefined) newConfig.autoReply = autoReply;
+    if (replyToGroups !== undefined) newConfig.replyToGroups = replyToGroups;
+    if (replyDelaySeconds !== undefined) newConfig.replyDelaySeconds = replyDelaySeconds;
+    if (keywordTriggers !== undefined) newConfig.keywordTriggers = keywordTriggers;
+    if (excludedKeywords !== undefined) newConfig.excludedKeywords = excludedKeywords;
+    if (businessHoursOnly !== undefined) newConfig.businessHoursOnly = businessHoursOnly;
+    if (startTime !== undefined) newConfig.startTime = startTime;
+    if (endTime !== undefined) newConfig.endTime = endTime;
+    if (timezone !== undefined) newConfig.timezone = timezone;
+    if (promptId !== undefined) newConfig.promptId = promptId || null;
 
-    if (!autopilot) {
-      autopilot = new Autopilot({ userId: req.userId, ...updates });
+    const isEnabledVal = enabled !== undefined ? enabled : (existing?.isEnabled ?? false);
+
+    let autopilot;
+    if (!existing) {
+      autopilot = await prisma.autopilot.create({
+        data: {
+          userId: req.userId!,
+          isEnabled: isEnabledVal,
+          config: newConfig,
+        },
+      });
     } else {
-      Object.assign(autopilot, updates);
+      autopilot = await prisma.autopilot.update({
+        where: { id: existing.id },
+        data: { isEnabled: isEnabledVal, config: newConfig },
+      });
     }
 
-    await autopilot.save();
-
-    // Re-fetch with populated prompt name
-    const saved = await Autopilot.findById(autopilot._id).populate('promptId', 'name');
-    res.json({ configured: true, ...saved!.toObject() });
+    const config = (autopilot.config as Record<string, any>) || {};
+    res.json({
+      configured: true,
+      id: autopilot.id,
+      userId: autopilot.userId,
+      enabled: autopilot.isEnabled,
+      autoReply: config.autoReply ?? true,
+      replyToGroups: config.replyToGroups ?? false,
+      replyDelaySeconds: config.replyDelaySeconds ?? 5,
+      keywordTriggers: config.keywordTriggers ?? [],
+      excludedKeywords: config.excludedKeywords ?? [],
+      businessHoursOnly: config.businessHoursOnly ?? false,
+      startTime: config.startTime ?? '09:00',
+      endTime: config.endTime ?? '18:00',
+      timezone: config.timezone ?? 'Africa/Nairobi',
+      promptId: config.promptId ?? null,
+      createdAt: autopilot.createdAt,
+      updatedAt: autopilot.updatedAt,
+    });
   } catch (error) {
     console.error('[Autopilot POST]', error);
     res.status(500).json({ error: 'Failed to save autopilot settings' });
@@ -92,15 +135,20 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
 // POST /toggle — quick enable/disable
 router.post('/toggle', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const autopilot = await Autopilot.findOne({ userId: req.userId });
+    const autopilot = await prisma.autopilot.findFirst({ where: { userId: req.userId } });
     if (!autopilot) {
       return res.status(400).json({ error: 'Configure autopilot settings first before toggling' });
     }
 
-    autopilot.enabled = !autopilot.enabled;
-    await autopilot.save();
+    const updated = await prisma.autopilot.update({
+      where: { id: autopilot.id },
+      data: { isEnabled: !autopilot.isEnabled },
+    });
 
-    res.json({ enabled: autopilot.enabled, message: autopilot.enabled ? 'Autopilot enabled' : 'Autopilot disabled' });
+    res.json({
+      enabled: updated.isEnabled,
+      message: updated.isEnabled ? 'Autopilot enabled' : 'Autopilot disabled',
+    });
   } catch (error) {
     console.error('[Autopilot TOGGLE]', error);
     res.status(500).json({ error: 'Failed to toggle autopilot' });

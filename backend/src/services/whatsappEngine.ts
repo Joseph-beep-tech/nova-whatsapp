@@ -15,14 +15,14 @@ import OpenAI from 'openai';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Client, LocalAuth } = require('whatsapp-web.js');
 
-import WhatsAppSession, { WASessionStatus } from '../models/WhatsAppSession';
-import WhatsAppMessage, { WAReplyKind } from '../models/WhatsAppMessage';
-import WhatsAppLead, { IWhatsAppLead } from '../models/WhatsAppLead';
-import Prompt from '../models/Prompt';
-import AICredentials from '../models/AICredentials';
+import { WASessionStatus } from '../models/WhatsAppSession';
+import { WAReplyKind } from '../models/WhatsAppMessage';
+import { IWhatsAppLead } from '../models/WhatsAppLead';
+import { prisma } from '../lib/prisma';
 import { decrypt } from '../utils/credentialsCrypto';
+import { novaGoHandler } from '../modules/whatsapp/novagoConversationHandler';
 
-const HISTORY_TURNS = 12;            // how many prior messages to feed the model
+const HISTORY_TURNS = 12;
 const READ_ONLY_SUFFIXES = ['@newsletter', '@broadcast', 'status@broadcast'];
 
 const SESSION_DATA_PATH =
@@ -36,14 +36,14 @@ if (!fs.existsSync(SESSION_DATA_PATH)) {
 interface RuntimeSession {
   sessionId: string;
   userId: string;
-  client: any;
+  client: unknown;
   status: WASessionStatus;
-  qr: string | null;          // raw qr string
-  qrDataUrl: string | null;   // base64 data URL for the frontend
+  qr: string | null;
+  qrDataUrl: string | null;
   phone: string | null;
   pushname: string | null;
   lastError: string | null;
-  // Dedup window for incoming messages (id -> timestamp)
+  restaurantId: string | null;
   recentMessageIds: Map<string, number>;
 }
 
@@ -51,18 +51,14 @@ class WhatsAppEngine {
   private sessions: Map<string, RuntimeSession> = new Map();
   private readonly DEDUP_WINDOW_MS = 60_000;
 
-  /**
-   * Restore sessions from MongoDB on startup. LocalAuth will pick up disk state
-   * and either reconnect silently or emit a fresh qr event.
-   */
   async restoreFromDb(): Promise<void> {
     try {
-      const records = await WhatsAppSession.find({
-        status: { $in: ['authenticated', 'connected', 'qr_pending', 'initializing'] },
+      const records = await prisma.whatsAppSession.findMany({
+        where: { status: { in: ['authenticated', 'connected', 'qr_pending', 'initializing'] } },
       });
       for (const record of records) {
         try {
-          await this.startClient(record.sessionId, String(record.userId));
+          await this.startClient(record.sessionId, record.userId);
         } catch (err) {
           console.error(
             `[WhatsAppEngine] Failed to restore session ${record.sessionId}:`,
@@ -78,27 +74,28 @@ class WhatsAppEngine {
     }
   }
 
-  /**
-   * Create a new session record + start the underlying client.
-   */
-  async createSession(userId: string, name: string, promptId?: string | null): Promise<RuntimeSession> {
+  async createSession(
+    userId: string,
+    name: string,
+    promptId?: string | null,
+    restaurantId?: string | null,
+  ): Promise<RuntimeSession> {
     const sessionId = `wa-${userId.slice(-4)}-${Date.now().toString(36)}`;
 
-    await WhatsAppSession.create({
-      userId,
-      sessionId,
-      name: name || '',
-      promptId: promptId || null,
-      status: 'initializing',
+    await prisma.whatsAppSession.create({
+      data: {
+        userId,
+        sessionId,
+        name: name || '',
+        promptId: promptId || null,
+        restaurantId: restaurantId || null,
+        status: 'initializing',
+      },
     });
 
     return this.startClient(sessionId, userId);
   }
 
-  /**
-   * Boot the whatsapp-web.js Client for a sessionId. Idempotent: returns the
-   * existing runtime session if already active.
-   */
   async startClient(sessionId: string, userId: string): Promise<RuntimeSession> {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing;
@@ -122,6 +119,9 @@ class WhatsAppEngine {
       },
     });
 
+    const sessionRecord = await prisma.whatsAppSession.findUnique({ where: { sessionId } });
+    const restaurantId = sessionRecord?.restaurantId || null;
+
     const runtime: RuntimeSession = {
       sessionId,
       userId,
@@ -132,11 +132,14 @@ class WhatsAppEngine {
       phone: null,
       pushname: null,
       lastError: null,
+      restaurantId,
       recentMessageIds: new Map(),
     };
     this.sessions.set(sessionId, runtime);
 
-    client.on('qr', async (qr: string) => {
+    const c = client as { on: (e: string, fn: (...a: unknown[]) => unknown) => void; initialize: () => Promise<void>; info?: { wid?: { user?: string }; pushname?: string } };
+
+    c.on('qr', async (qr: string) => {
       runtime.qr = qr;
       try {
         runtime.qrDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 1 });
@@ -147,19 +150,19 @@ class WhatsAppEngine {
       await this.updateStatus(sessionId, 'qr_pending');
     });
 
-    client.on('authenticated', async () => {
+    c.on('authenticated', async () => {
       runtime.qr = null;
       runtime.qrDataUrl = null;
       await this.updateStatus(sessionId, 'authenticated');
     });
 
-    client.on('auth_failure', async (msg: string) => {
+    c.on('auth_failure', async (msg: string) => {
       runtime.lastError = msg;
       await this.updateStatus(sessionId, 'auth_failed', { lastError: msg });
     });
 
-    client.on('ready', async () => {
-      const info = client.info;
+    c.on('ready', async () => {
+      const info = (client as { info?: { wid?: { user?: string }; pushname?: string } }).info;
       runtime.phone = info?.wid?.user || null;
       runtime.pushname = info?.pushname || null;
       runtime.qr = null;
@@ -172,16 +175,16 @@ class WhatsAppEngine {
       console.log(`[WhatsAppEngine][${sessionId}] Connected as ${runtime.pushname} (${runtime.phone})`);
     });
 
-    client.on('disconnected', async (reason: string) => {
+    c.on('disconnected', async (reason: string) => {
       runtime.lastError = reason;
       await this.updateStatus(sessionId, 'disconnected', { lastError: reason });
       try {
-        await client.destroy();
+        await (client as { destroy: () => Promise<void> }).destroy();
       } catch (_) { /* noop */ }
       this.sessions.delete(sessionId);
     });
 
-    client.on('message', async (msg: any) => {
+    c.on('message', async (msg: unknown) => {
       try {
         await this.handleIncomingMessage(runtime, msg);
       } catch (err) {
@@ -189,7 +192,7 @@ class WhatsAppEngine {
       }
     });
 
-    client.initialize().catch(async (err: unknown) => {
+    c.initialize().catch(async (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       runtime.lastError = message;
       await this.updateStatus(sessionId, 'disconnected', { lastError: message });
@@ -199,18 +202,20 @@ class WhatsAppEngine {
     return runtime;
   }
 
-  /**
-   * Core message router — mirrors wa.dt.wrld messageRouter:
-   * 1. Skip own messages (feedback loop prevention)
-   * 2. Deduplicate
-   * 3. Persist inbound message
-   * 4. Built-in keyword commands (ping, echo, help)
-   * 5. Fallback to AI using the user's active prompt + OpenAI credentials
-   */
-  private async handleIncomingMessage(runtime: RuntimeSession, msg: any): Promise<void> {
-    if (msg.fromMe) return;
+  private async handleIncomingMessage(runtime: RuntimeSession, msg: unknown): Promise<void> {
+    const m = msg as {
+      fromMe?: boolean;
+      id?: { _serialized?: string; id?: string };
+      from?: string;
+      timestamp?: number;
+      body?: string;
+      author?: string;
+      hasMedia?: boolean;
+    };
 
-    const id = msg?.id?._serialized || msg?.id?.id || `${msg.from}:${msg.timestamp}`;
+    if (m.fromMe) return;
+
+    const id = m?.id?._serialized || m?.id?.id || `${m.from}:${m.timestamp}`;
     const now = Date.now();
     for (const [k, t] of runtime.recentMessageIds) {
       if (now - t > this.DEDUP_WINDOW_MS) runtime.recentMessageIds.delete(k);
@@ -218,14 +223,13 @@ class WhatsAppEngine {
     if (runtime.recentMessageIds.has(id)) return;
     runtime.recentMessageIds.set(id, now);
 
-    const body: string = (msg.body || '').trim();
-    const chatId: string = msg.from;
+    const body: string = (m.body || '').trim();
+    const chatId: string = m.from || '';
     const isGroup = typeof chatId === 'string' && chatId.endsWith('@g.us');
     const isReadOnly = READ_ONLY_SUFFIXES.some((suffix) =>
       typeof chatId === 'string' && chatId.endsWith(suffix)
     );
 
-    // Persist inbound message (even empty/media-only — useful in chat history)
     await this.persistMessage({
       userId: runtime.userId,
       sessionId: runtime.sessionId,
@@ -233,28 +237,28 @@ class WhatsAppEngine {
       isGroup,
       fromMe: false,
       direction: 'in',
-      author: msg.author || null,
+      author: m.author || null,
       body,
-      hasMedia: !!msg.hasMedia,
+      hasMedia: !!m.hasMedia,
       messageId: id,
       replyKind: null,
-      timestamp: msg.timestamp ? new Date(msg.timestamp * 1000) : new Date(),
+      timestamp: m.timestamp ? new Date(m.timestamp * 1000) : new Date(),
     });
 
-    // Channels and broadcasts are read-only feeds — WhatsApp won't deliver replies.
-    // Skip both keyword and AI handlers to avoid wasted OpenAI calls.
     if (isReadOnly) return;
-
     if (!body) return;
 
-    // Built-in commands (mirroring keywordHandler in the engine)
     const keyword = this.detectKeyword(body);
     if (keyword) {
       await this.respondKeyword(runtime, msg, keyword);
       return;
     }
 
-    // AI fallback using user's prompt + credentials
+    if (runtime.restaurantId) {
+      await this.respondAsRestaurantAI(runtime, msg, body, chatId, isGroup);
+      return;
+    }
+
     await this.respondWithAI(runtime, msg, body, chatId, isGroup);
   }
 
@@ -273,7 +277,24 @@ class WhatsAppEngine {
     timestamp: Date;
   }): Promise<void> {
     try {
-      await WhatsAppMessage.create(data);
+      await prisma.whatsAppMessage.create({
+        data: {
+          userId: data.userId,
+          sessionId: data.sessionId,
+          chatId: data.chatId,
+          from: data.fromMe ? 'me' : data.chatId,
+          to: data.fromMe ? data.chatId : null,
+          body: data.body,
+          direction: data.direction,
+          fromMe: data.fromMe,
+          isGroup: data.isGroup,
+          author: data.author,
+          hasMedia: data.hasMedia,
+          replyKind: data.replyKind || null,
+          messageId: data.messageId,
+          timestamp: data.timestamp,
+        },
+      });
     } catch (err) {
       console.error(`[WhatsAppEngine][${data.sessionId}] persist message failed:`, err);
     }
@@ -286,7 +307,7 @@ class WhatsAppEngine {
     replyKind: WAReplyKind,
     isGroup: boolean
   ): Promise<void> {
-    const sent = await runtime.client.sendMessage(chatId, text);
+    const sent = await (runtime.client as { sendMessage: (to: string, text: string) => Promise<{ id?: { _serialized?: string } }> }).sendMessage(chatId, text);
     await this.persistMessage({
       userId: runtime.userId,
       sessionId: runtime.sessionId,
@@ -313,10 +334,10 @@ class WhatsAppEngine {
 
   private async respondKeyword(
     runtime: RuntimeSession,
-    msg: any,
+    msg: unknown,
     kw: { name: 'ping' | 'echo' | 'help'; arg?: string }
   ): Promise<void> {
-    const chatId: string = msg.from;
+    const chatId: string = (msg as { from?: string }).from || '';
     const isGroup = typeof chatId === 'string' && chatId.endsWith('@g.us');
     let text: string | null = null;
     if (kw.name === 'ping') text = 'pong 🏓';
@@ -328,14 +349,66 @@ class WhatsAppEngine {
     if (text) await this.sendAndLog(runtime, chatId, text, 'keyword', isGroup);
   }
 
+  private async respondAsRestaurantAI(
+    runtime: RuntimeSession,
+    _msg: unknown,
+    body: string,
+    chatId: string,
+    isGroup: boolean,
+  ): Promise<void> {
+    const creds = await prisma.aICredentials.findFirst({ where: { userId: runtime.userId } });
+    if (!creds?.openaiApiKey) {
+      console.warn(`[WhatsAppEngine][${runtime.sessionId}] NovaGo: no OpenAI key for user ${runtime.userId}`);
+      return;
+    }
+    const apiKey = decrypt(creds.openaiApiKey);
+    if (!apiKey) {
+      console.warn(`[WhatsAppEngine][${runtime.sessionId}] NovaGo: OpenAI key decrypt failed`);
+      return;
+    }
+
+    const history = await prisma.whatsAppMessage.findMany({
+      where: { sessionId: runtime.sessionId, chatId },
+      orderBy: { timestamp: 'desc' },
+      take: 10,
+    });
+    const priorHistory = [...history]
+      .reverse()
+      .slice(0, -1)
+      .map((m) => ({
+        role: m.direction === 'out' ? ('assistant' as const) : ('user' as const),
+        content: m.body || '',
+      }))
+      .filter((m) => m.content);
+
+    const customerPhone = chatId.endsWith('@c.us') ? chatId.replace('@c.us', '') : chatId;
+
+    try {
+      const reply = await novaGoHandler.handleMessage({
+        restaurantId:  runtime.restaurantId!,
+        sessionId:     runtime.sessionId,
+        chatId,
+        customerPhone,
+        messageBody:   body,
+        apiKey,
+        priorHistory,
+      });
+      if (reply) {
+        await this.sendAndLog(runtime, chatId, reply, 'ai', isGroup);
+      }
+    } catch (err) {
+      console.error(`[WhatsAppEngine][${runtime.sessionId}] NovaGo handler error:`, err);
+    }
+  }
+
   private async respondWithAI(
     runtime: RuntimeSession,
-    _msg: any,
+    _msg: unknown,
     body: string,
     chatId: string,
     isGroup: boolean
   ): Promise<void> {
-    const creds = await AICredentials.findOne({ userId: runtime.userId });
+    const creds = await prisma.aICredentials.findFirst({ where: { userId: runtime.userId } });
     if (!creds?.openaiApiKey) {
       console.warn(`[WhatsAppEngine][${runtime.sessionId}] No OpenAI key for user ${runtime.userId}`);
       return;
@@ -346,17 +419,16 @@ class WhatsAppEngine {
       return;
     }
 
-    // Resolve the user's prompt (session-bound > active > most recent)
-    const sessionRecord = await WhatsAppSession.findOne({ sessionId: runtime.sessionId });
+    const sessionRecord = await prisma.whatsAppSession.findUnique({ where: { sessionId: runtime.sessionId } });
     let prompt = null;
     if (sessionRecord?.promptId) {
-      prompt = await Prompt.findOne({ _id: sessionRecord.promptId, userId: runtime.userId });
+      prompt = await prisma.prompt.findFirst({ where: { id: sessionRecord.promptId, userId: runtime.userId } });
     }
     if (!prompt) {
-      prompt = await Prompt.findOne({ userId: runtime.userId, status: 'active' }).sort({ updatedAt: -1 });
+      prompt = await prisma.prompt.findFirst({ where: { userId: runtime.userId, status: 'active' }, orderBy: { updatedAt: 'desc' } });
     }
     if (!prompt) {
-      prompt = await Prompt.findOne({ userId: runtime.userId }).sort({ updatedAt: -1 });
+      prompt = await prisma.prompt.findFirst({ where: { userId: runtime.userId }, orderBy: { updatedAt: 'desc' } });
     }
 
     const businessContext =
@@ -364,21 +436,17 @@ class WhatsAppEngine {
       'You are a helpful WhatsApp assistant for a small business. Be warm, concise, and professional.';
     const businessName = prompt?.name?.trim() || 'our business';
 
-    // Lead state + chat history
     const lead = await this.getOrCreateLead(runtime, chatId);
-    const history = await WhatsAppMessage.find({
-      sessionId: runtime.sessionId,
-      chatId,
-    })
-      .sort({ timestamp: -1 })
-      .limit(HISTORY_TURNS + 1) // +1 because the message we just stored is included
-      .lean();
+    const history = await prisma.whatsAppMessage.findMany({
+      where: { sessionId: runtime.sessionId, chatId },
+      orderBy: { timestamp: 'desc' },
+      take: HISTORY_TURNS + 1,
+    });
 
-    // Drop the message we just received (duplicate) and reverse to chronological order.
-    const priorHistory = history
+    const priorHistory = [...history]
       .reverse()
       .slice(0, -1)
-      .map((m: any) => ({
+      .map((m) => ({
         role: m.direction === 'out' ? ('assistant' as const) : ('user' as const),
         content: m.body || (m.hasMedia ? '[media]' : ''),
       }))
@@ -415,10 +483,10 @@ class WhatsAppEngine {
         await this.applyLeadExtraction(lead, parsed.extracted);
       }
 
-      // Always increment turns + bump last interaction
-      lead.turns += 1;
-      lead.lastInteractionAt = new Date();
-      await lead.save();
+      await prisma.whatsAppLead.update({
+        where: { id: lead.id },
+        data: { turns: { increment: 1 }, lastInteractionAt: new Date() },
+      });
 
       if (parsed.reply) {
         await this.sendAndLog(runtime, chatId, parsed.reply, 'ai', isGroup);
@@ -429,22 +497,17 @@ class WhatsAppEngine {
   }
 
   private async getOrCreateLead(runtime: RuntimeSession, chatId: string): Promise<IWhatsAppLead> {
-    const phone = chatId.endsWith('@c.us')
-      ? chatId.replace('@c.us', '')
-      : null; // @lid hides the real number; we only persist what we know
-    const session = await WhatsAppSession.findOne({ sessionId: runtime.sessionId });
-    const userObjectId = session?.userId;
+    const phone = chatId.endsWith('@c.us') ? chatId.replace('@c.us', '') : null;
+    const session = await prisma.whatsAppSession.findUnique({ where: { sessionId: runtime.sessionId } });
+    const userId = session?.userId || runtime.userId;
 
-    let lead = await WhatsAppLead.findOne({ sessionId: runtime.sessionId, chatId });
+    let lead = await prisma.whatsAppLead.findFirst({ where: { sessionId: runtime.sessionId, chatId } });
     if (!lead) {
-      lead = await WhatsAppLead.create({
-        userId: userObjectId,
-        sessionId: runtime.sessionId,
-        chatId,
-        phone,
+      lead = await prisma.whatsAppLead.create({
+        data: { userId, sessionId: runtime.sessionId, chatId, phone, source: 'whatsapp' },
       });
     } else if (!lead.phone && phone) {
-      lead.phone = phone;
+      lead = await prisma.whatsAppLead.update({ where: { id: lead.id }, data: { phone } });
     }
     return lead;
   }
@@ -457,7 +520,7 @@ class WhatsAppEngine {
     isGroup: boolean;
   }): string {
     const { businessName, businessContext, lead, isFirstContact, isGroup } = args;
-    const known = (val: string | null) => (val && val.trim() ? val : 'unknown');
+    const known = (val: string | null | undefined) => (val && val.trim() ? val : 'unknown');
 
     return [
       `You are the official WhatsApp assistant for ${businessName}.`,
@@ -506,12 +569,11 @@ class WhatsAppEngine {
     extracted: { name?: string | null; location?: string | null; requirement?: string | null } | null;
   } {
     try {
-      const obj = JSON.parse(raw);
+      const obj = JSON.parse(raw) as { reply?: unknown; extracted?: { name?: string | null; location?: string | null; requirement?: string | null } };
       const reply = typeof obj.reply === 'string' ? obj.reply.trim() : null;
       const extracted = obj.extracted && typeof obj.extracted === 'object' ? obj.extracted : null;
       return { reply, extracted };
     } catch {
-      // Model didn't honor JSON — fall back to using the raw text as the reply.
       return { reply: raw || null, extracted: null };
     }
   }
@@ -527,16 +589,19 @@ class WhatsAppEngine {
       if (/^(unknown|null|none|n\/a)$/i.test(t)) return null;
       return t;
     };
+    const updates: Record<string, string> = {};
     const newName = clean(extracted.name);
     const newLocation = clean(extracted.location);
     const newRequirement = clean(extracted.requirement);
-    if (newName && !lead.name) lead.name = newName;
-    if (newLocation && !lead.location) lead.location = newLocation;
+    if (newName && !lead.name) updates.name = newName;
+    if (newLocation && !lead.location) updates.location = newLocation;
     if (newRequirement) {
-      // Append over time — requirements may evolve as the chat develops.
-      lead.requirement = lead.requirement
+      updates.requirement = lead.requirement
         ? `${lead.requirement}; ${newRequirement}`
         : newRequirement;
+    }
+    if (Object.keys(updates).length > 0) {
+      await prisma.whatsAppLead.update({ where: { id: lead.id }, data: updates });
     }
   }
 
@@ -548,7 +613,7 @@ class WhatsAppEngine {
     const runtime = this.sessions.get(sessionId);
     if (runtime) runtime.status = status;
     try {
-      await WhatsAppSession.updateOne({ sessionId }, { $set: { status, ...extra } });
+      await prisma.whatsAppSession.update({ where: { sessionId }, data: { status, ...extra } });
     } catch (err) {
       console.error(`[WhatsAppEngine][${sessionId}] DB updateStatus failed:`, err);
     }
@@ -559,36 +624,49 @@ class WhatsAppEngine {
   }
 
   async listForUser(userId: string) {
-    const records = await WhatsAppSession.find({ userId }).sort({ createdAt: -1 });
+    const records = await prisma.whatsAppSession.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
     return records.map((r) => {
       const runtime = this.sessions.get(r.sessionId);
       return {
-        id: String(r._id),
-        sessionId: r.sessionId,
-        name: r.name,
-        phone: runtime?.phone || r.phone,
-        pushname: runtime?.pushname || r.pushname,
-        status: runtime?.status || r.status,
-        promptId: r.promptId ? String(r.promptId) : null,
+        id:           r.id,
+        sessionId:    r.sessionId,
+        name:         r.name,
+        phone:        runtime?.phone    || r.phone,
+        pushname:     runtime?.pushname || r.pushname,
+        status:       runtime?.status   || r.status,
+        promptId:     r.promptId     || null,
+        restaurantId: r.restaurantId || null,
         lastActiveAt: r.lastActiveAt,
-        lastError: runtime?.lastError || r.lastError,
-        createdAt: r.createdAt,
+        lastError:    runtime?.lastError || r.lastError,
+        createdAt:    r.createdAt,
       };
     });
   }
 
+  async linkRestaurant(userId: string, sessionId: string, restaurantId: string | null): Promise<boolean> {
+    const record = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
+    if (!record) return false;
+    await prisma.whatsAppSession.update({ where: { sessionId }, data: { restaurantId: restaurantId ?? null } });
+    const runtime = this.sessions.get(sessionId);
+    if (runtime) runtime.restaurantId = restaurantId;
+    return true;
+  }
+
   async getQR(userId: string, sessionId: string): Promise<{ status: WASessionStatus; qrDataUrl: string | null } | null> {
-    const record = await WhatsAppSession.findOne({ sessionId, userId });
+    const record = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!record) return null;
     const runtime = this.sessions.get(sessionId);
     return {
-      status: runtime?.status || record.status,
+      status: (runtime?.status || record.status) as WASessionStatus,
       qrDataUrl: runtime?.qrDataUrl || null,
     };
   }
 
   async getStatus(userId: string, sessionId: string) {
-    const record = await WhatsAppSession.findOne({ sessionId, userId });
+    const record = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!record) return null;
     const runtime = this.sessions.get(sessionId);
     return {
@@ -601,29 +679,28 @@ class WhatsAppEngine {
   }
 
   async disconnect(userId: string, sessionId: string): Promise<boolean> {
-    const record = await WhatsAppSession.findOne({ sessionId, userId });
+    const record = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!record) return false;
     const runtime = this.sessions.get(sessionId);
     if (runtime) {
-      try { await runtime.client.logout(); } catch (_) { /* ignore */ }
-      try { await runtime.client.destroy(); } catch (_) { /* ignore */ }
+      try { await (runtime.client as { logout: () => Promise<void> }).logout(); } catch (_) { /* ignore */ }
+      try { await (runtime.client as { destroy: () => Promise<void> }).destroy(); } catch (_) { /* ignore */ }
       this.sessions.delete(sessionId);
     }
-    await WhatsAppSession.updateOne({ sessionId }, { $set: { status: 'disconnected' } });
+    await prisma.whatsAppSession.update({ where: { sessionId }, data: { status: 'disconnected' } });
     return true;
   }
 
   async destroy(userId: string, sessionId: string): Promise<boolean> {
-    const record = await WhatsAppSession.findOne({ sessionId, userId });
+    const record = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!record) return false;
     const runtime = this.sessions.get(sessionId);
     if (runtime) {
-      try { await runtime.client.logout(); } catch (_) { /* ignore */ }
-      try { await runtime.client.destroy(); } catch (_) { /* ignore */ }
+      try { await (runtime.client as { logout: () => Promise<void> }).logout(); } catch (_) { /* ignore */ }
+      try { await (runtime.client as { destroy: () => Promise<void> }).destroy(); } catch (_) { /* ignore */ }
       this.sessions.delete(sessionId);
     }
-    await WhatsAppSession.deleteOne({ sessionId });
-    // Best-effort cleanup of LocalAuth data on disk
+    await prisma.whatsAppSession.delete({ where: { sessionId } });
     const dir = path.join(SESSION_DATA_PATH, `session-${sessionId}`);
     try {
       if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
@@ -634,7 +711,7 @@ class WhatsAppEngine {
   }
 
   async sendMessage(userId: string, sessionId: string, to: string, text: string): Promise<boolean> {
-    const record = await WhatsAppSession.findOne({ sessionId, userId });
+    const record = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!record) return false;
     const runtime = this.sessions.get(sessionId);
     if (!runtime || runtime.status !== 'connected') return false;
@@ -644,57 +721,68 @@ class WhatsAppEngine {
     return true;
   }
 
-  /**
-   * List chats for a session: one entry per chatId with last message + counts.
-   */
   async listChats(userId: string, sessionId: string) {
-    const session = await WhatsAppSession.findOne({ sessionId, userId });
+    const session = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!session) return null;
 
-    const chats = await WhatsAppMessage.aggregate([
-      { $match: { sessionId, userId: session.userId } },
-      { $sort: { timestamp: -1 } },
-      {
-        $group: {
-          _id: '$chatId',
-          lastMessage: { $first: '$$ROOT' },
-          messageCount: { $sum: 1 },
-          inboundCount: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
-        },
-      },
-      { $sort: { 'lastMessage.timestamp': -1 } },
-      { $limit: 200 },
-    ]);
+    type ChatRow = {
+      chatId: string;
+      messageCount: bigint;
+      inboundCount: bigint;
+      lastBody: string;
+      lastDirection: string;
+      lastTimestamp: Date;
+      lastReplyKind: string | null;
+      lastHasMedia: boolean;
+    };
 
-    return chats.map((c: any) => ({
-      chatId: c._id,
-      isGroup: typeof c._id === 'string' && c._id.endsWith('@g.us'),
+    const chats = await prisma.$queryRaw<ChatRow[]>`
+      SELECT
+        "chatId",
+        COUNT(*) as "messageCount",
+        SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END) as "inboundCount",
+        (array_agg(body ORDER BY timestamp DESC))[1] as "lastBody",
+        (array_agg(direction ORDER BY timestamp DESC))[1] as "lastDirection",
+        (array_agg("replyKind" ORDER BY timestamp DESC))[1] as "lastReplyKind",
+        (array_agg("hasMedia" ORDER BY timestamp DESC))[1] as "lastHasMedia",
+        MAX(timestamp) as "lastTimestamp"
+      FROM "WhatsAppMessage"
+      WHERE "sessionId" = ${sessionId}
+      GROUP BY "chatId"
+      ORDER BY MAX(timestamp) DESC
+      LIMIT 200
+    `;
+
+    return chats.map((c) => ({
+      chatId: c.chatId,
+      isGroup: typeof c.chatId === 'string' && c.chatId.endsWith('@g.us'),
       lastMessage: {
-        body: c.lastMessage.body,
-        direction: c.lastMessage.direction,
-        timestamp: c.lastMessage.timestamp,
-        replyKind: c.lastMessage.replyKind,
-        hasMedia: c.lastMessage.hasMedia,
+        body: c.lastBody,
+        direction: c.lastDirection,
+        timestamp: c.lastTimestamp,
+        replyKind: c.lastReplyKind,
+        hasMedia: c.lastHasMedia,
       },
-      messageCount: c.messageCount,
-      inboundCount: c.inboundCount,
+      messageCount: Number(c.messageCount),
+      inboundCount: Number(c.inboundCount),
     }));
   }
 
   async getLead(userId: string, sessionId: string, chatId: string) {
-    const session = await WhatsAppSession.findOne({ sessionId, userId });
+    const session = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!session) return null;
-    const lead = await WhatsAppLead.findOne({ sessionId, chatId, userId: session.userId }).lean();
-    return lead || null;
+    return prisma.whatsAppLead.findFirst({ where: { sessionId, chatId, userId: session.userId } });
   }
 
   async listLeads(userId: string, opts: { sessionId?: string; limit?: number } = {}) {
-    const filter: Record<string, unknown> = { userId };
-    if (opts.sessionId) filter.sessionId = opts.sessionId;
     const limit = Math.min(opts.limit || 200, 500);
-    const leads = await WhatsAppLead.find(filter).sort({ updatedAt: -1 }).limit(limit).lean();
-    return leads.map((l: any) => ({
-      id: String(l._id),
+    const leads = await prisma.whatsAppLead.findMany({
+      where: { userId, ...(opts.sessionId ? { sessionId: opts.sessionId } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    return leads.map((l) => ({
+      id: l.id,
       sessionId: l.sessionId,
       chatId: l.chatId,
       phone: l.phone,
@@ -704,102 +792,65 @@ class WhatsAppEngine {
       turns: l.turns,
       lastInteractionAt: l.lastInteractionAt,
       createdAt: l.createdAt,
-      updatedAt: l.updatedAt,
     }));
   }
 
-  /**
-   * Aggregate stats for a user across all their WhatsApp sessions.
-   * Powers the dashboard tiles (interactions, AI/keyword/manual reply counts).
-   */
   async statsForUser(userId: string) {
-    const sessions = await WhatsAppSession.find({ userId }).select('_id userId').lean();
-    const objectId = sessions[0]?.userId; // Mongoose ObjectId we can reuse for queries
+    const sessions = await prisma.whatsAppSession.findMany({
+      where: { userId },
+      select: { sessionId: true },
+    });
+    const sessionIds = sessions.map((s) => s.sessionId);
 
-    const baseMatch = objectId ? { userId: objectId } : { userId: userId as any };
+    if (sessionIds.length === 0) {
+      return {
+        sessions: 0, totalChats: 0,
+        totals: { all: 0, inbound: 0, outbound: 0, ai: 0, keyword: 0, manual: 0 },
+        last24h: { all: 0, inbound: 0, outbound: 0 },
+        thisMonth: { all: 0, replies: 0 },
+        recentChats: [],
+      };
+    }
+
     const now = Date.now();
     const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const where = { sessionId: { in: sessionIds } };
 
-    const [totals, last24, monthly, distinctChats, recentChats] = await Promise.all([
-      WhatsAppMessage.aggregate([
-        { $match: baseMatch },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            inbound: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
-            outbound: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
-            ai: { $sum: { $cond: [{ $eq: ['$replyKind', 'ai'] }, 1, 0] } },
-            keyword: { $sum: { $cond: [{ $eq: ['$replyKind', 'keyword'] }, 1, 0] } },
-            manual: { $sum: { $cond: [{ $eq: ['$replyKind', 'manual'] }, 1, 0] } },
-          },
-        },
-      ]),
-      WhatsAppMessage.aggregate([
-        { $match: { ...baseMatch, timestamp: { $gte: dayAgo } } },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            inbound: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
-            outbound: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
-          },
-        },
-      ]),
-      WhatsAppMessage.aggregate([
-        { $match: { ...baseMatch, timestamp: { $gte: monthStart } } },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            replies: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
-          },
-        },
-      ]),
-      WhatsAppMessage.distinct('chatId', baseMatch),
-      WhatsAppMessage.aggregate([
-        { $match: baseMatch },
-        { $sort: { timestamp: -1 } },
-        {
-          $group: {
-            _id: '$chatId',
-            lastBody: { $first: '$body' },
-            lastDirection: { $first: '$direction' },
-            timestamp: { $first: '$timestamp' },
-          },
-        },
-        { $sort: { timestamp: -1 } },
-        { $limit: 5 },
-      ]),
+    const [total, inbound, outbound, ai, keyword, manual, last24total, last24in, last24out, monthTotal, monthReplies, distinctChatRows] = await Promise.all([
+      prisma.whatsAppMessage.count({ where }),
+      prisma.whatsAppMessage.count({ where: { ...where, direction: 'in' } }),
+      prisma.whatsAppMessage.count({ where: { ...where, direction: 'out' } }),
+      prisma.whatsAppMessage.count({ where: { ...where, replyKind: 'ai' } }),
+      prisma.whatsAppMessage.count({ where: { ...where, replyKind: 'keyword' } }),
+      prisma.whatsAppMessage.count({ where: { ...where, replyKind: 'manual' } }),
+      prisma.whatsAppMessage.count({ where: { ...where, timestamp: { gte: dayAgo } } }),
+      prisma.whatsAppMessage.count({ where: { ...where, direction: 'in', timestamp: { gte: dayAgo } } }),
+      prisma.whatsAppMessage.count({ where: { ...where, direction: 'out', timestamp: { gte: dayAgo } } }),
+      prisma.whatsAppMessage.count({ where: { ...where, timestamp: { gte: monthStart } } }),
+      prisma.whatsAppMessage.count({ where: { ...where, direction: 'out', timestamp: { gte: monthStart } } }),
+      prisma.whatsAppMessage.findMany({ where, select: { chatId: true }, distinct: ['chatId'] }),
     ]);
 
-    const t = totals[0] || { total: 0, inbound: 0, outbound: 0, ai: 0, keyword: 0, manual: 0 };
-    const d = last24[0] || { total: 0, inbound: 0, outbound: 0 };
-    const m = monthly[0] || { total: 0, replies: 0 };
+    type RecentRow = { chatId: string; lastBody: string; lastDirection: string; timestamp: Date };
+    const recentChats = sessionIds.length > 0
+      ? await prisma.$queryRaw<RecentRow[]>`
+          SELECT DISTINCT ON ("chatId") "chatId", body as "lastBody", direction as "lastDirection", timestamp
+          FROM "WhatsAppMessage"
+          WHERE "sessionId" = ANY(${sessionIds}::text[])
+          ORDER BY "chatId", timestamp DESC
+          LIMIT 5
+        `
+      : [];
 
     return {
       sessions: sessions.length,
-      totalChats: distinctChats.length,
-      totals: {
-        all: t.total,
-        inbound: t.inbound,
-        outbound: t.outbound,
-        ai: t.ai,
-        keyword: t.keyword,
-        manual: t.manual,
-      },
-      last24h: {
-        all: d.total,
-        inbound: d.inbound,
-        outbound: d.outbound,
-      },
-      thisMonth: {
-        all: m.total,
-        replies: m.replies,
-      },
-      recentChats: recentChats.map((c: any) => ({
-        chatId: c._id,
+      totalChats: distinctChatRows.length,
+      totals: { all: total, inbound, outbound, ai, keyword, manual },
+      last24h: { all: last24total, inbound: last24in, outbound: last24out },
+      thisMonth: { all: monthTotal, replies: monthReplies },
+      recentChats: recentChats.map((c) => ({
+        chatId: c.chatId,
         lastBody: c.lastBody,
         lastDirection: c.lastDirection,
         timestamp: c.timestamp,
@@ -807,20 +858,16 @@ class WhatsAppEngine {
     };
   }
 
-  async listMessages(
-    userId: string,
-    sessionId: string,
-    chatId: string,
-    limit = 100
-  ) {
-    const session = await WhatsAppSession.findOne({ sessionId, userId });
+  async listMessages(userId: string, sessionId: string, chatId: string, limit = 100) {
+    const session = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId } });
     if (!session) return null;
-    const messages = await WhatsAppMessage.find({ sessionId, chatId, userId: session.userId })
-      .sort({ timestamp: -1 })
-      .limit(limit)
-      .lean();
-    return messages.reverse().map((m: any) => ({
-      id: String(m._id),
+    const messages = await prisma.whatsAppMessage.findMany({
+      where: { sessionId, chatId, userId: session.userId },
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+    });
+    return [...messages].reverse().map((m) => ({
+      id: m.id,
       chatId: m.chatId,
       direction: m.direction,
       fromMe: m.fromMe,

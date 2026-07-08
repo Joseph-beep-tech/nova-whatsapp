@@ -71,7 +71,7 @@ app.use(errorHandler);
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🚀  NovaGo backend running → http://localhost:${PORT}`);
-  console.log(`📦  Database: ${process.env.MONGODB_URI?.replace(/:([^:@]+)@/, ':****@') || 'not set'}`);
+  console.log(`📦  Database: ${(process.env.DATABASE_URL || 'not set').replace(/:([^:@]+)@/, ':****@')}`);
   console.log(`🌍  Environment: ${process.env.NODE_ENV || 'development'}\n`);
 
   setTimeout(() => {

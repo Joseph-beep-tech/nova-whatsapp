@@ -6,10 +6,9 @@
  */
 import { Router, Request, Response } from 'express';
 import { authMiddleware as authenticate } from '../middleware/auth';
-import KnowledgeBase, { KBDocType } from '../models/KnowledgeBase';
-import RestaurantAIConfig from '../models/RestaurantAIConfig';
-import AIInteractionLog from '../models/AIInteractionLog';
-import Reservation from '../models/Reservation';
+import { KBDocType } from '../models/KnowledgeBase';
+import { prisma } from '../lib/prisma';
+import { Prisma } from '@prisma/client';
 import OpenAI from 'openai';
 import multer from 'multer';
 import path from 'path';
@@ -18,7 +17,6 @@ import fs from 'fs';
 const router = Router();
 router.use(authenticate);
 
-// Lazy singleton — instantiated on first use so dotenv has already run
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI {
   if (!_openai) {
@@ -30,7 +28,6 @@ function getOpenAI(): OpenAI {
   return _openai;
 }
 
-// ── File upload setup ─────────────────────────────────────────────────────────
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'kb');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -38,9 +35,8 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10 MB
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function chunkText(text: string, maxTokens = 400): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
   const chunks: string[] = [];
@@ -58,52 +54,53 @@ function chunkText(text: string, maxTokens = 400): string[] {
 }
 
 async function embedChunks(chunks: string[]): Promise<number[][]> {
-  const resp = await getOpenAI().embeddings.create({
-    model: 'text-embedding-3-small',
-    input: chunks,
-  });
+  const resp = await getOpenAI().embeddings.create({ model: 'text-embedding-3-small', input: chunks });
   return resp.data.map((d) => d.embedding);
 }
 
 async function processKBDoc(docId: string): Promise<void> {
-  const doc = await KnowledgeBase.findById(docId);
+  const doc = await prisma.knowledgeBase.findUnique({ where: { id: docId } });
   if (!doc) return;
   try {
     const chunks = chunkText(doc.rawContent);
     const embeddings = await embedChunks(chunks);
-    doc.chunks = chunks.map((text, i) => ({
-      chunkIndex: i,
-      text,
-      embedding: embeddings[i],
-      tokens: text.split(' ').length,
+    const kbChunks = chunks.map((text, i) => ({
+      chunkIndex: i, text, embedding: embeddings[i], tokens: text.split(' ').length,
     }));
-    doc.wordCount = doc.rawContent.split(' ').length;
-    doc.status = 'active';
-    doc.vectorisedAt = new Date();
-    await doc.save();
-  } catch (err: any) {
-    doc.status = 'error';
-    doc.errorMessage = err.message;
-    await doc.save();
+    await prisma.knowledgeBase.update({
+      where: { id: docId },
+      data: {
+        chunks: kbChunks as unknown as Prisma.InputJsonValue,
+        wordCount: doc.rawContent.split(' ').length,
+        status: 'active',
+        vectorisedAt: new Date(),
+      },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await prisma.knowledgeBase.update({ where: { id: docId }, data: { status: 'error', errorMessage: msg } });
   }
 }
 
-// ── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
+// ── KNOWLEDGE BASE ─────────────────────────────────────────────────────────────
 
-// GET /api/restaurant-ai/knowledge/:restaurantId
 router.get('/knowledge/:restaurantId', async (req: Request, res: Response) => {
   try {
-    const docs = await KnowledgeBase.find({
-      restaurantId: req.params.restaurantId,
-      status: { $ne: 'archived' },
-    }).select('-chunks').sort({ createdAt: -1 });
+    const docs = await prisma.knowledgeBase.findMany({
+      where: { restaurantId: req.params.restaurantId, status: { not: 'archived' } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, restaurantId: true, title: true, docType: true, status: true,
+        wordCount: true, fileUrl: true, fileName: true, mimeType: true,
+        errorMessage: true, vectorisedAt: true, createdBy: true, createdAt: true, updatedAt: true,
+      },
+    });
     res.json(docs);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// POST /api/restaurant-ai/knowledge  — create from raw text or file
 router.post('/knowledge', upload.single('file'), async (req: Request, res: Response) => {
   try {
     const { restaurantId, title, docType, content } = req.body;
@@ -120,7 +117,6 @@ router.post('/knowledge', upload.single('file'), async (req: Request, res: Respo
       fileUrl = `/uploads/kb/${req.file.filename}`;
       fileName = req.file.originalname;
       mimeType = req.file.mimetype;
-      // If text/plain just read it; for PDF in production you'd call a parser
       if (req.file.mimetype === 'text/plain') {
         rawContent = fs.readFileSync(req.file.path, 'utf-8');
       } else if (!rawContent) {
@@ -128,81 +124,75 @@ router.post('/knowledge', upload.single('file'), async (req: Request, res: Respo
       }
     }
 
-    if (!rawContent.trim()) {
-      return res.status(400).json({ message: 'Content or file is required' });
-    }
+    if (!rawContent.trim()) return res.status(400).json({ message: 'Content or file is required' });
 
-    const doc = await KnowledgeBase.create({
-      restaurantId,
-      title,
-      docType: (docType as KBDocType) || 'general',
-      rawContent,
-      fileUrl,
-      fileName,
-      mimeType,
-      wordCount: rawContent.split(' ').length,
-      status: 'processing',
-      createdBy: (req as any).user._id,
+    const doc = await prisma.knowledgeBase.create({
+      data: {
+        restaurantId, title,
+        docType: (docType as KBDocType) || 'general',
+        rawContent, fileUrl, fileName, mimeType,
+        wordCount: rawContent.split(' ').length,
+        status: 'processing',
+        createdBy: (req as unknown as { user: { id: string } }).user.id,
+      },
     });
 
-    // Process async (embed in background)
-    processKBDoc(doc._id.toString()).catch(console.error);
-
-    res.status(201).json({ ...doc.toObject(), chunks: undefined });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+    processKBDoc(doc.id).catch(console.error);
+    const { chunks: _c, rawContent: _r, ...rest } = doc;
+    res.status(201).json(rest);
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// PUT /api/restaurant-ai/knowledge/:id
 router.put('/knowledge/:id', async (req: Request, res: Response) => {
   try {
     const { title, docType, rawContent } = req.body;
-    const doc = await KnowledgeBase.findById(req.params.id);
+    const doc = await prisma.knowledgeBase.findUnique({ where: { id: req.params.id } });
     if (!doc) return res.status(404).json({ message: 'Not found' });
-    if (title) doc.title = title;
-    if (docType) doc.docType = docType;
+
+    const updateData: Prisma.KnowledgeBaseUpdateInput = {};
+    if (title) updateData.title = title;
+    if (docType) updateData.docType = docType;
     if (rawContent && rawContent !== doc.rawContent) {
-      doc.rawContent = rawContent;
-      doc.status = 'processing';
-      doc.chunks = [];
-      await doc.save();
-      processKBDoc(doc._id.toString()).catch(console.error);
-    } else {
-      await doc.save();
+      updateData.rawContent = rawContent;
+      updateData.status = 'processing';
+      updateData.chunks = [] as unknown as Prisma.InputJsonValue;
     }
-    res.json(doc);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+    const updated = await prisma.knowledgeBase.update({ where: { id: req.params.id }, data: updateData });
+    if (rawContent && rawContent !== doc.rawContent) {
+      processKBDoc(updated.id).catch(console.error);
+    }
+    res.json(updated);
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// DELETE /api/restaurant-ai/knowledge/:id
 router.delete('/knowledge/:id', async (req: Request, res: Response) => {
   try {
-    await KnowledgeBase.findByIdAndUpdate(req.params.id, { status: 'archived' });
+    await prisma.knowledgeBase.update({ where: { id: req.params.id }, data: { status: 'archived' } });
     res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// POST /api/restaurant-ai/knowledge/:id/reprocess
 router.post('/knowledge/:id/reprocess', async (req: Request, res: Response) => {
   try {
-    const doc = await KnowledgeBase.findById(req.params.id);
+    const doc = await prisma.knowledgeBase.findUnique({ where: { id: req.params.id } });
     if (!doc) return res.status(404).json({ message: 'Not found' });
-    doc.status = 'processing';
-    doc.errorMessage = undefined;
-    await doc.save();
-    processKBDoc(doc._id.toString()).catch(console.error);
+    await prisma.knowledgeBase.update({
+      where: { id: req.params.id },
+      data: { status: 'processing', errorMessage: null },
+    });
+    processKBDoc(req.params.id).catch(console.error);
     res.json({ message: 'Reprocessing started' });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// POST /api/restaurant-ai/knowledge/query — RAG search (test endpoint)
 router.post('/knowledge/query', async (req: Request, res: Response) => {
   try {
     const { restaurantId, query, topK = 5 } = req.body;
@@ -210,18 +200,15 @@ router.post('/knowledge/query', async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'restaurantId and query required' });
     }
     const [queryEmbed] = await embedChunks([query]);
-    const docs = await KnowledgeBase.find({ restaurantId, status: 'active' });
+    const docs = await prisma.knowledgeBase.findMany({ where: { restaurantId, status: 'active' } });
 
     type ScoredChunk = { docId: string; title: string; docType: string; text: string; score: number };
     const scored: ScoredChunk[] = [];
 
     for (const doc of docs) {
-      // Pull embeddings (excluded by default)
-      const fullDoc = await KnowledgeBase.findById(doc._id);
-      if (!fullDoc) continue;
-      for (const chunk of fullDoc.chunks) {
+      const chunks = doc.chunks as unknown as Array<{ text: string; embedding?: number[]; chunkIndex: number }>;
+      for (const chunk of chunks) {
         if (!chunk.embedding || chunk.embedding.length === 0) continue;
-        // cosine similarity
         let dot = 0, magA = 0, magB = 0;
         for (let i = 0; i < queryEmbed.length; i++) {
           dot += queryEmbed[i] * chunk.embedding[i];
@@ -229,140 +216,272 @@ router.post('/knowledge/query', async (req: Request, res: Response) => {
           magB += chunk.embedding[i] ** 2;
         }
         const score = dot / (Math.sqrt(magA) * Math.sqrt(magB) + 1e-10);
-        scored.push({ docId: String(doc._id), title: doc.title, docType: doc.docType, text: chunk.text, score });
+        scored.push({ docId: doc.id, title: doc.title, docType: doc.docType, text: chunk.text, score });
       }
     }
 
     scored.sort((a, b) => b.score - a.score);
     res.json({ results: scored.slice(0, topK) });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 // ── AI CONFIG ──────────────────────────────────────────────────────────────────
 
-// GET /api/restaurant-ai/config/:restaurantId
 router.get('/config/:restaurantId', async (req: Request, res: Response) => {
   try {
-    let config = await RestaurantAIConfig.findOne({ restaurantId: req.params.restaurantId });
+    let config = await prisma.restaurantAIConfig.findFirst({ where: { restaurantId: req.params.restaurantId } });
     if (!config) {
-      config = await RestaurantAIConfig.create({
-        restaurantId: req.params.restaurantId,
-      });
+      config = await prisma.restaurantAIConfig.create({ data: { restaurantId: req.params.restaurantId } });
     }
     res.json(config);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// PUT /api/restaurant-ai/config/:restaurantId
 router.put('/config/:restaurantId', async (req: Request, res: Response) => {
   try {
-    const config = await RestaurantAIConfig.findOneAndUpdate(
-      { restaurantId: req.params.restaurantId },
-      { ...req.body, updatedBy: (req as any).user._id },
-      { new: true, upsert: true }
-    );
+    const { upsellRules, voiceLanguages, ...rest } = req.body;
+    const config = await prisma.restaurantAIConfig.upsert({
+      where: { restaurantId: req.params.restaurantId },
+      update: {
+        ...rest,
+        updatedBy: (req as unknown as { user: { id: string } }).user.id,
+        ...(upsellRules !== undefined ? { upsellRules: upsellRules as Prisma.InputJsonValue } : {}),
+        ...(voiceLanguages !== undefined ? { voiceLanguages } : {}),
+      },
+      create: {
+        restaurantId: req.params.restaurantId,
+        ...rest,
+        updatedBy: (req as unknown as { user: { id: string } }).user.id,
+        ...(upsellRules !== undefined ? { upsellRules: upsellRules as Prisma.InputJsonValue } : {}),
+        ...(voiceLanguages !== undefined ? { voiceLanguages } : {}),
+      },
+    });
     res.json(config);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 // ── AI INTERACTION LOGS ────────────────────────────────────────────────────────
 
-// GET /api/restaurant-ai/interactions/:restaurantId
 router.get('/interactions/:restaurantId', async (req: Request, res: Response) => {
   try {
     const { channel, intent, page = 1, limit = 50 } = req.query;
-    const filter: Record<string, any> = { restaurantId: req.params.restaurantId };
-    if (channel) filter.channel = channel;
-    if (intent) filter.intent = intent;
+    const where: Prisma.AIInteractionLogWhereInput = { restaurantId: req.params.restaurantId };
+    if (channel) where.channel = channel as string;
+    if (intent) where.intent = intent as string;
     const skip = (Number(page) - 1) * Number(limit);
     const [logs, total] = await Promise.all([
-      AIInteractionLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
-      AIInteractionLog.countDocuments(filter),
+      prisma.aIInteractionLog.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: Number(limit) }),
+      prisma.aIInteractionLog.count({ where }),
     ]);
     res.json({ logs, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// GET /api/restaurant-ai/interactions/:restaurantId/stats
 router.get('/interactions/:restaurantId/stats', async (req: Request, res: Response) => {
   try {
     const rid = req.params.restaurantId;
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const [total, escalated, byChannel, byIntent] = await Promise.all([
-      AIInteractionLog.countDocuments({ restaurantId: rid, createdAt: { $gte: since } }),
-      AIInteractionLog.countDocuments({ restaurantId: rid, wasEscalated: true, createdAt: { $gte: since } }),
-      AIInteractionLog.aggregate([
-        { $match: { restaurantId: new (require('mongoose').Types.ObjectId)(rid), createdAt: { $gte: since } } },
-        { $group: { _id: '$channel', count: { $sum: 1 } } },
-      ]),
-      AIInteractionLog.aggregate([
-        { $match: { restaurantId: new (require('mongoose').Types.ObjectId)(rid), createdAt: { $gte: since } } },
-        { $group: { _id: '$intent', count: { $sum: 1 } } },
-      ]),
+    const where: Prisma.AIInteractionLogWhereInput = { restaurantId: rid, createdAt: { gte: since } };
+
+    const [total, escalated, byChannelRaw, byIntentRaw] = await Promise.all([
+      prisma.aIInteractionLog.count({ where }),
+      prisma.aIInteractionLog.count({ where: { ...where, escalated: true } }),
+      prisma.aIInteractionLog.groupBy({ by: ['channel'], where, _count: { channel: true } }),
+      prisma.aIInteractionLog.groupBy({ by: ['intent'], where, _count: { intent: true } }),
     ]);
+
+    const byChannel = byChannelRaw.map((r) => ({ _id: r.channel, count: r._count.channel }));
+    const byIntent = byIntentRaw.map((r) => ({ _id: r.intent, count: r._count.intent }));
     res.json({ total, escalated, byChannel, byIntent });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 // ── RESERVATIONS ───────────────────────────────────────────────────────────────
 
-// GET /api/restaurant-ai/reservations/:restaurantId
 router.get('/reservations/:restaurantId', async (req: Request, res: Response) => {
   try {
     const { status, date } = req.query;
-    const filter: Record<string, any> = { restaurantId: req.params.restaurantId };
-    if (status) filter.status = status;
+    const where: Prisma.ReservationWhereInput = { restaurantId: req.params.restaurantId };
+    if (status) where.status = status as string;
     if (date) {
       const d = new Date(date as string);
       const next = new Date(d);
       next.setDate(next.getDate() + 1);
-      filter.date = { $gte: d, $lt: next };
+      where.date = { gte: d, lt: next };
     }
-    const reservations = await Reservation.find(filter).sort({ date: 1, timeSlot: 1 });
+    const reservations = await prisma.reservation.findMany({ where, orderBy: { date: 'asc' } });
     res.json(reservations);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// POST /api/restaurant-ai/reservations
 router.post('/reservations', async (req: Request, res: Response) => {
   try {
-    const reservation = await Reservation.create(req.body);
+    const { restaurantId, customerName, date, partySize, customerPhone, customerEmail, notes, tableNumber } = req.body;
+    const reservation = await prisma.reservation.create({
+      data: { restaurantId, customerName, date: new Date(date), partySize: Number(partySize), customerPhone, customerEmail, notes, tableNumber },
+    });
     res.status(201).json(reservation);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// PUT /api/restaurant-ai/reservations/:id
 router.put('/reservations/:id', async (req: Request, res: Response) => {
   try {
-    const reservation = await Reservation.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!reservation) return res.status(404).json({ message: 'Not found' });
+    const { restaurantId: _r, id: _i, ...data } = req.body;
+    if (data.date) data.date = new Date(data.date);
+    if (data.partySize) data.partySize = Number(data.partySize);
+    const reservation = await prisma.reservation.update({ where: { id: req.params.id }, data });
     res.json(reservation);
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
+      return res.status(404).json({ message: 'Not found' });
+    }
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// DELETE /api/restaurant-ai/reservations/:id
 router.delete('/reservations/:id', async (req: Request, res: Response) => {
   try {
-    await Reservation.findByIdAndUpdate(req.params.id, { status: 'cancelled' });
+    await prisma.reservation.update({ where: { id: req.params.id }, data: { status: 'cancelled' } });
     res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ── ANALYTICS ─────────────────────────────────────────────────────────────────
+
+router.get('/analytics/:restaurantId/popular-items', async (req: Request, res: Response) => {
+  try {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rid = req.params.restaurantId;
+
+    type PopularRow = { name: string; totalQty: bigint; totalRevenue: number };
+    const results = await prisma.$queryRaw<PopularRow[]>`
+      SELECT
+        item->>'name' as name,
+        SUM((item->>'quantity')::int) as "totalQty",
+        SUM((item->>'quantity')::int * (item->>'price')::float) as "totalRevenue"
+      FROM "Order" o,
+        jsonb_array_elements(o.items::jsonb) as item
+      WHERE o."restaurantId" = ${rid}
+        AND o."createdAt" >= ${since}
+        AND o.status != 'cancelled'
+      GROUP BY item->>'name'
+      ORDER BY "totalQty" DESC
+      LIMIT 10
+    `;
+
+    res.json(results.map((r) => ({ name: r.name, totalQty: Number(r.totalQty), totalRevenue: Number(r.totalRevenue) })));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.get('/analytics/:restaurantId/demand', async (req: Request, res: Response) => {
+  try {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const rid = req.params.restaurantId;
+
+    type DemandRow = { hour: number; dayOfWeek: number; orders: bigint; revenue: number };
+    const results = await prisma.$queryRaw<DemandRow[]>`
+      SELECT
+        EXTRACT(HOUR FROM "createdAt")::int as hour,
+        EXTRACT(DOW FROM "createdAt")::int as "dayOfWeek",
+        COUNT(*)::int as orders,
+        COALESCE(SUM(total), 0)::float as revenue
+      FROM "Order"
+      WHERE "restaurantId" = ${rid}
+        AND "createdAt" >= ${since}
+        AND status != 'cancelled'
+      GROUP BY EXTRACT(HOUR FROM "createdAt"), EXTRACT(DOW FROM "createdAt")
+      ORDER BY "dayOfWeek", hour
+    `;
+
+    res.json(results.map((r) => ({ hour: Number(r.hour), dayOfWeek: Number(r.dayOfWeek), orders: Number(r.orders), revenue: Number(r.revenue) })));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.get('/analytics/:restaurantId/customers', async (req: Request, res: Response) => {
+  try {
+    const rid = req.params.restaurantId;
+    const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    type CLVRow = { phone: string; customerName: string; orderCount: bigint; totalSpend: number; avgOrderValue: number; firstOrder: Date; lastOrder: Date };
+    type NVRRow = { total: bigint; returning: bigint };
+
+    const [clvData, newVsReturning] = await Promise.all([
+      prisma.$queryRaw<CLVRow[]>`
+        SELECT
+          "customerPhone" as phone,
+          MAX("customerName") as "customerName",
+          COUNT(*) as "orderCount",
+          COALESCE(SUM(total), 0)::float as "totalSpend",
+          COALESCE(AVG(total), 0)::float as "avgOrderValue",
+          MIN("createdAt") as "firstOrder",
+          MAX("createdAt") as "lastOrder"
+        FROM "Order"
+        WHERE "restaurantId" = ${rid}
+          AND status != 'cancelled'
+          AND "customerPhone" IS NOT NULL
+          AND "customerPhone" != ''
+        GROUP BY "customerPhone"
+        ORDER BY "totalSpend" DESC
+        LIMIT 20
+      `,
+      prisma.$queryRaw<NVRRow[]>`
+        WITH customer_orders AS (
+          SELECT "customerPhone", COUNT(*) as order_count
+          FROM "Order"
+          WHERE "restaurantId" = ${rid}
+            AND "createdAt" >= ${since30}
+            AND status != 'cancelled'
+          GROUP BY "customerPhone"
+        )
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) as returning
+        FROM customer_orders
+      `,
+    ]);
+
+    const nvr = newVsReturning[0] || { total: 0n, returning: 0n };
+    const total = Number(nvr.total);
+    const returning = Number(nvr.returning);
+    res.json({
+      topCustomers: clvData.map((r) => ({
+        phone: r.phone,
+        customerName: r.customerName,
+        orderCount: Number(r.orderCount),
+        totalSpend: Number(r.totalSpend),
+        avgOrderValue: Number(r.avgOrderValue),
+        firstOrder: r.firstOrder,
+        lastOrder: r.lastOrder,
+      })),
+      last30Days: {
+        uniqueCustomers: total,
+        returningCustomers: returning,
+        newCustomers: total - returning,
+        retentionRate: total > 0 ? Math.round((returning / total) * 100) : 0,
+      },
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
   }
 });
 
