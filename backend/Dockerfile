@@ -1,6 +1,5 @@
 FROM node:22-slim
 
-# Install Chromium and required system libs for Puppeteer/whatsapp-web.js
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -22,7 +21,6 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Use system Chromium — skip Puppeteer's bundled Chrome download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -30,17 +28,19 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
-COPY package*.json ./
-# --include=dev so prisma CLI and tsc are available at build time
+# Build context is repo root — all paths must be prefixed with backend/
+COPY backend/package*.json ./
 RUN npm install --include=dev
 
-COPY prisma ./prisma
+COPY backend/prisma ./prisma
 RUN npx prisma generate
 
-COPY . .
+COPY backend/src ./src
+COPY backend/tsconfig.json ./
+
 RUN npm run build
 
 EXPOSE 5000
 
-# db push at startup so schema is always in sync with Neon
-CMD npx prisma db push --accept-data-loss && node dist/index.js
+# JSON array form (avoids OS signal warning); shell -c to chain two commands
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/index.js"]
