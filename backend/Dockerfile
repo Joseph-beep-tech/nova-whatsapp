@@ -4,17 +4,15 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
-# Build context is repo root — all paths must be prefixed with backend/
-COPY backend/package*.json ./
+# Copy all config files in one step to avoid isolated-COPY cache misses
+COPY backend/package*.json backend/tsconfig.json backend/prisma.config.ts ./
+
 RUN npm install --include=dev
 
 COPY backend/prisma ./prisma
 RUN npx prisma generate
 
 COPY backend/src ./src
-COPY backend/tsconfig.json ./
-COPY backend/prisma.config.ts ./
-
 RUN npm run build
 
 EXPOSE 5000
