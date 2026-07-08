@@ -37,6 +37,7 @@ RUN npx prisma generate
 
 COPY backend/src ./src
 COPY backend/tsconfig.json ./
+COPY backend/prisma.config.ts ./
 
 RUN npm run build
 
