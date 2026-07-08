@@ -80,18 +80,33 @@ class WhatsAppEngine {
     promptId?: string | null,
     restaurantId?: string | null,
   ): Promise<RuntimeSession> {
-    const sessionId = `wa-${userId.slice(-4)}-${Date.now().toString(36)}`;
+    const sessionId = (name || '').trim() || `wa-${userId.slice(-4)}-${Date.now().toString(36)}`;
 
-    await prisma.whatsAppSession.create({
-      data: {
+    // Already running in memory — return immediately
+    const existing = this.sessions.get(sessionId);
+    if (existing && existing.status !== 'disconnected' && existing.status !== 'auth_failed') {
+      return existing;
+    }
+
+    // Upsert so reconnect doesn't fail with unique-key errors
+    await prisma.whatsAppSession.upsert({
+      where: { sessionId },
+      create: {
         userId,
         sessionId,
-        name: name || '',
+        name: name || sessionId,
         promptId: promptId || null,
         restaurantId: restaurantId || null,
         status: 'initializing',
       },
+      update: {
+        status: 'initializing',
+        lastError: null,
+      },
     });
+
+    // Remove stale runtime entry so startClient re-creates the client
+    this.sessions.delete(sessionId);
 
     return this.startClient(sessionId, userId);
   }
@@ -107,6 +122,7 @@ class WhatsAppEngine {
       }),
       puppeteer: {
         headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -114,6 +130,7 @@ class WhatsAppEngine {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
+          '--single-process',
           '--disable-gpu',
         ],
       },
