@@ -62,7 +62,7 @@ function normaliseState(raw: string): SessionState {
   const s = (raw || '').toUpperCase();
   if (s === 'CONNECTED' || s === 'READY') return 'CONNECTED';
   if (s === 'SCAN_QR_CODE' || s === 'QR' || s === 'QR_REQUIRED' || s === 'QR_PENDING') return 'SCAN_QR_CODE';
-  if (s === 'INITIALIZING' || s === 'STARTING' || s === 'LOADING') return 'INITIALIZING';
+  if (s === 'INITIALIZING' || s === 'STARTING' || s === 'LOADING' || s === 'AUTHENTICATED') return 'INITIALIZING';
   if (s === 'FAILED' || s === 'ERROR') return 'FAILED';
   return 'DISCONNECTED';
 }

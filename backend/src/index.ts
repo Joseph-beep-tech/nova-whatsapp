@@ -26,7 +26,6 @@ import menuRoutes from './routes/menus';
 import orderRoutes from './routes/orders';
 import riderRoutes from './routes/riders';
 import paymentRoutes from './routes/payments';
-import { whatsappEngine } from './services/whatsappEngine';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -74,11 +73,7 @@ app.listen(PORT, () => {
   console.log(`📦  Database: ${(process.env.DATABASE_URL || 'not set').replace(/:([^:@]+)@/, ':****@')}`);
   console.log(`🌍  Environment: ${process.env.NODE_ENV || 'development'}\n`);
 
-  setTimeout(() => {
-    whatsappEngine.restoreFromDb().catch((err) => {
-      console.error('[WhatsAppEngine] restore on boot failed:', err);
-    });
-  }, 2000);
+  console.log(`🔗  WhatsApp API: ${process.env.WHATSAPP_API_URL || '(not configured)'}\n`);
 });
 
 export default app;

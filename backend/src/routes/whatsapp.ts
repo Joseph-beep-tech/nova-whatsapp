@@ -1,6 +1,23 @@
+/**
+ * WhatsApp routes — thin proxy to the external wwebjs-api service.
+ *
+ * Set env vars in Railway:
+ *   WHATSAPP_API_URL   Base URL of the deployed wwebjs-api (e.g. https://wa.dater.world)
+ *   WHATSAPP_API_KEY   API key expected by that service (x-api-key header)
+ *
+ * Session records are kept in Postgres so each user can only see their own
+ * sessions. All live WhatsApp state (QR, connection, messages) lives in the
+ * wwebjs-api service.
+ */
+
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { whatsappEngine } from '../services/whatsappEngine';
+import { prisma } from '../lib/prisma';
+
+const router = Router();
+
+const WA_API_URL = (process.env.WHATSAPP_API_URL || '').replace(/\/$/, '');
+const WA_API_KEY = process.env.WHATSAPP_API_KEY || '';
 
 interface AuthRequest extends Request {
   userId?: string;
@@ -8,183 +25,219 @@ interface AuthRequest extends Request {
   params: any;
 }
 
-const router = Router();
+function normalizeSessionId(raw?: string): string {
+  const t = (raw || '').trim();
+  if (!t) return `wa-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+  return t
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 64);
+}
 
-// List all WhatsApp sessions for the current user
+function waHeaders(): Record<string, string> {
+  return { 'x-api-key': WA_API_KEY };
+}
+
+// ── Session listing (DB-backed for user isolation) ────────────────────────────
+
 router.get('/sessions', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const sessions = await whatsappEngine.listForUser(req.userId!);
-    res.json(sessions);
+    const sessions = await prisma.whatsAppSession.findMany({
+      where: { userId: req.userId! },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return res.json(sessions);
   } catch (err) {
-    console.error('[whatsapp][list] error:', err);
-    res.status(500).json({ error: 'Failed to list sessions' });
+    console.error('[whatsapp][list]', err);
+    return res.status(500).json({ error: 'Failed to list sessions' });
   }
 });
 
-// Create a new session and start the underlying engine client
+// ── Create / start a session ──────────────────────────────────────────────────
+
 router.post('/sessions', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { name, promptId, restaurantId } = req.body || {};
-    const runtime = await whatsappEngine.createSession(req.userId!, name || '', promptId || null, restaurantId || null);
-    res.status(201).json({
-      sessionId:    runtime.sessionId,
-      status:       runtime.status,
-      name:         name         || '',
-      promptId:     promptId     || null,
-      restaurantId: restaurantId || null,
+    const sessionId = normalizeSessionId(name);
+
+    await prisma.whatsAppSession.upsert({
+      where: { sessionId },
+      create: {
+        userId: req.userId!,
+        sessionId,
+        name: name || sessionId,
+        promptId: promptId || null,
+        restaurantId: restaurantId || null,
+        status: 'initializing',
+      },
+      update: { status: 'initializing', lastError: null },
+    });
+
+    if (WA_API_URL) {
+      const resp = await fetch(
+        `${WA_API_URL}/session/start/${encodeURIComponent(sessionId)}`,
+        { headers: waHeaders() }
+      ).catch((e) => {
+        console.error('[whatsapp][start] fetch error:', e?.message);
+        return null;
+      });
+
+      if (resp && !resp.ok) {
+        const body = await resp.text().catch(() => '');
+        console.error(`[whatsapp][start] wwebjs-api ${resp.status}:`, body);
+      }
+    } else {
+      console.warn('[whatsapp] WHATSAPP_API_URL not set — session recorded but not started');
+    }
+
+    return res.status(201).json({ sessionId, status: 'initializing' });
+  } catch (err) {
+    console.error('[whatsapp][create]', err);
+    return res.status(500).json({ error: 'Failed to start session' });
+  }
+});
+
+// ── Live status (proxied from wwebjs-api) ─────────────────────────────────────
+
+router.get('/sessions/:sessionId/status', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const { sessionId } = req.params;
+
+  try {
+    if (!WA_API_URL) {
+      return res.json({ status: 'disconnected', error: 'WHATSAPP_API_URL not configured' });
+    }
+
+    const resp = await fetch(
+      `${WA_API_URL}/session/status/${encodeURIComponent(sessionId)}`,
+      { headers: waHeaders() }
+    );
+
+    const data: any = await resp.json().catch(() => ({}));
+
+    // wwebjs-api returns { success, state } — map to { status }
+    const status: string = (data?.state || data?.status || 'disconnected').toLowerCase();
+
+    // Persist latest status so the DB stays in sync
+    await prisma.whatsAppSession.updateMany({
+      where: { sessionId, userId: req.userId! },
+      data: { status },
+    }).catch(() => {});
+
+    return res.json({
+      status,
+      phone:    data?.phone    ?? null,
+      pushname: data?.pushname ?? null,
     });
   } catch (err) {
-    console.error('[whatsapp][create] error:', err);
-    res.status(500).json({ error: 'Failed to create session' });
+    console.error('[whatsapp][status]', err);
+    return res.status(503).json({ status: 'disconnected', error: 'WhatsApp API unreachable' });
   }
 });
 
-// Get current QR code (data URL) for a session
+// ── QR code — fetched from wwebjs-api and returned as base64 data URL ─────────
+
 router.get('/sessions/:sessionId/qr', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const { sessionId } = req.params;
+
   try {
-    const data = await whatsappEngine.getQR(req.userId!, req.params.sessionId);
-    if (!data) return res.status(404).json({ error: 'Session not found' });
-    res.json(data);
+    if (!WA_API_URL) {
+      return res.json({ status: 'not_ready', qrDataUrl: null });
+    }
+
+    const resp = await fetch(
+      `${WA_API_URL}/session/qr/${encodeURIComponent(sessionId)}/image`,
+      { headers: waHeaders() }
+    );
+
+    if (!resp.ok) {
+      return res.json({ status: 'not_ready', qrDataUrl: null });
+    }
+
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const qrDataUrl = `data:image/png;base64,${buf.toString('base64')}`;
+    return res.json({ qrDataUrl, status: 'qr_pending' });
   } catch (err) {
-    console.error('[whatsapp][qr] error:', err);
-    res.status(500).json({ error: 'Failed to fetch QR' });
+    console.error('[whatsapp][qr]', err);
+    return res.json({ status: 'not_ready', qrDataUrl: null });
   }
 });
 
-// Get session status (poll target for the frontend)
-router.get('/sessions/:sessionId/status', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const status = await whatsappEngine.getStatus(req.userId!, req.params.sessionId);
-    if (!status) return res.status(404).json({ error: 'Session not found' });
-    res.json(status);
-  } catch (err) {
-    console.error('[whatsapp][status] error:', err);
-    res.status(500).json({ error: 'Failed to fetch status' });
-  }
-});
+// ── Disconnect ────────────────────────────────────────────────────────────────
 
-// Disconnect a session (keeps the record but logs out the client)
 router.post('/sessions/:sessionId/disconnect', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const { sessionId } = req.params;
+
   try {
-    const ok = await whatsappEngine.disconnect(req.userId!, req.params.sessionId);
-    if (!ok) return res.status(404).json({ error: 'Session not found' });
-    res.json({ status: 'disconnected' });
+    if (WA_API_URL) {
+      await fetch(
+        `${WA_API_URL}/session/terminate/${encodeURIComponent(sessionId)}`,
+        { headers: waHeaders() }
+      ).catch(() => {});
+    }
+
+    await prisma.whatsAppSession.updateMany({
+      where: { sessionId, userId: req.userId! },
+      data: { status: 'disconnected' },
+    }).catch(() => {});
+
+    return res.json({ status: 'disconnected' });
   } catch (err) {
-    console.error('[whatsapp][disconnect] error:', err);
-    res.status(500).json({ error: 'Failed to disconnect' });
+    console.error('[whatsapp][disconnect]', err);
+    return res.status(500).json({ error: 'Failed to disconnect' });
   }
 });
 
-// Permanently delete a session (also removes LocalAuth data)
+// ── Delete session ────────────────────────────────────────────────────────────
+
 router.delete('/sessions/:sessionId', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const ok = await whatsappEngine.destroy(req.userId!, req.params.sessionId);
-    if (!ok) return res.status(404).json({ error: 'Session not found' });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('[whatsapp][destroy] error:', err);
-    res.status(500).json({ error: 'Failed to delete session' });
-  }
-});
+  const { sessionId } = req.params;
 
-// Link or unlink a session to a restaurant AI agent
-router.patch('/sessions/:sessionId/restaurant', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { restaurantId } = req.body || {};
-    const ok = await whatsappEngine.linkRestaurant(req.userId!, req.params.sessionId, restaurantId || null);
-    if (!ok) return res.status(404).json({ error: 'Session not found' });
-    res.json({ ok: true, restaurantId: restaurantId || null });
-  } catch (err) {
-    console.error('[whatsapp][link-restaurant] error:', err);
-    res.status(500).json({ error: 'Failed to link restaurant' });
-  }
-});
-
-// List leads (CRM-style summary across all sessions, optionally filtered)
-router.get('/leads', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const sessionId = (req.query as any).sessionId as string | undefined;
-    const limit = parseInt((req.query as any).limit || '200', 10) || 200;
-    const leads = await whatsappEngine.listLeads(req.userId!, { sessionId, limit });
-    res.json(leads);
-  } catch (err) {
-    console.error('[whatsapp][leads] error:', err);
-    res.status(500).json({ error: 'Failed to list leads' });
-  }
-});
-
-// Get a single lead for one chat (used in the chat panel)
-router.get(
-  '/sessions/:sessionId/chats/:chatId/lead',
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const lead = await whatsappEngine.getLead(req.userId!, req.params.sessionId, req.params.chatId);
-      if (!lead) return res.status(404).json({ error: 'Lead not found' });
-      res.json(lead);
-    } catch (err) {
-      console.error('[whatsapp][lead] error:', err);
-      res.status(500).json({ error: 'Failed to fetch lead' });
+    if (WA_API_URL) {
+      await fetch(
+        `${WA_API_URL}/session/terminate/${encodeURIComponent(sessionId)}`,
+        { headers: waHeaders() }
+      ).catch(() => {});
     }
-  }
-);
 
-// Aggregate WhatsApp stats for the dashboard
-router.get('/stats', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const stats = await whatsappEngine.statsForUser(req.userId!);
-    res.json(stats);
+    await prisma.whatsAppSession.deleteMany({
+      where: { sessionId, userId: req.userId! },
+    }).catch(() => {});
+
+    return res.json({ ok: true });
   } catch (err) {
-    console.error('[whatsapp][stats] error:', err);
-    res.status(500).json({ error: 'Failed to fetch stats' });
+    console.error('[whatsapp][delete]', err);
+    return res.status(500).json({ error: 'Failed to delete session' });
   }
 });
 
-// List chats for a session (one entry per chatId, with last message + counts)
-router.get('/sessions/:sessionId/chats', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const chats = await whatsappEngine.listChats(req.userId!, req.params.sessionId);
-    if (chats === null) return res.status(404).json({ error: 'Session not found' });
-    res.json(chats);
-  } catch (err) {
-    console.error('[whatsapp][chats] error:', err);
-    res.status(500).json({ error: 'Failed to list chats' });
-  }
-});
+// ── Send message ──────────────────────────────────────────────────────────────
 
-// Get message transcript for a single chat (oldest → newest)
-router.get(
-  '/sessions/:sessionId/chats/:chatId/messages',
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const limit = Math.min(parseInt(String(req.query.limit || '100'), 10) || 100, 500);
-      const messages = await whatsappEngine.listMessages(
-        req.userId!,
-        req.params.sessionId,
-        req.params.chatId,
-        limit
-      );
-      if (messages === null) return res.status(404).json({ error: 'Session not found' });
-      res.json(messages);
-    } catch (err) {
-      console.error('[whatsapp][messages] error:', err);
-      res.status(500).json({ error: 'Failed to fetch messages' });
-    }
-  }
-);
-
-// Send a message manually (useful for the frontend HITL view / testing)
 router.post('/sessions/:sessionId/messages', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const { sessionId } = req.params;
+  const { to, text } = req.body || {};
+
   try {
-    const { to, text } = req.body || {};
-    if (!to || !text) return res.status(400).json({ error: 'to and text are required' });
-    const ok = await whatsappEngine.sendMessage(req.userId!, req.params.sessionId, to, text);
-    if (!ok) return res.status(409).json({ error: 'Session not connected' });
-    res.json({ ok: true });
+    if (!WA_API_URL) {
+      return res.status(503).json({ error: 'WHATSAPP_API_URL not configured' });
+    }
+
+    const resp = await fetch(
+      `${WA_API_URL}/client/sendMessage/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'POST',
+        headers: { ...waHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: `${to}@c.us`, contentType: 'string', content: text }),
+      }
+    );
+
+    const data = await resp.json().catch(() => ({}));
+    return res.status(resp.ok ? 200 : resp.status).json(data);
   } catch (err) {
-    console.error('[whatsapp][sendMessage] error:', err);
-    res.status(500).json({ error: 'Failed to send message' });
+    console.error('[whatsapp][send]', err);
+    return res.status(503).json({ error: 'WhatsApp API unreachable' });
   }
 });
 
