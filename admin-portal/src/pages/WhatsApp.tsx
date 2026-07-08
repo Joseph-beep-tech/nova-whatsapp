@@ -151,17 +151,21 @@ function QRConnectPanel({ onConnected }: { onConnected: (phone?: string, sid?: s
       const res = await waGet('/sessions');
       if (!res) return;
       const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-      if (list.length > 0) {
-        const s   = list[0];
-        const sid = s.sessionId || s.id || 'novago-main';
-        setSessionId(sid);
-        const state = normaliseState(s.status || '');
-        setSession({ sessionId: sid, state });
-        if (state !== 'CONNECTED') {
-          pollRef.current = setInterval(() => pollStatus(sid), 4000);
-        } else {
-          onConnected(s.phone, sid);
-        }
+      // Only restore an active session — ignore disconnected/failed orphans so they
+      // don't pollute the session name input; the backend cleans them on restart.
+      const active = list.find((s: any) => {
+        const st = normaliseState(s.status || '');
+        return st !== 'DISCONNECTED' && st !== 'FAILED';
+      });
+      if (!active) return;
+      const sid = active.sessionId || active.id || 'novago-main';
+      setSessionId(sid);
+      const state = normaliseState(active.status || '');
+      setSession({ sessionId: sid, state });
+      if (state !== 'CONNECTED') {
+        pollRef.current = setInterval(() => pollStatus(sid), 4000);
+      } else {
+        onConnected(active.phone, sid);
       }
     })();
     return () => { clearInterval(pollRef.current); revokeOldQr(); };

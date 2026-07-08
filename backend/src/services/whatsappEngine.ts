@@ -53,6 +53,11 @@ class WhatsAppEngine {
 
   async restoreFromDb(): Promise<void> {
     try {
+      // Purge stale sessions that are already dead — keeps the DB clean on each startup
+      await prisma.whatsAppSession.deleteMany({
+        where: { status: { in: ['disconnected', 'auth_failed'] } },
+      }).catch(() => {/* noop */});
+
       const records = await prisma.whatsAppSession.findMany({
         where: { status: { in: ['authenticated', 'connected', 'qr_pending', 'initializing'] } },
       });
