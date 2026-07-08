@@ -86,16 +86,6 @@ async function waPost(path: string, body: object): Promise<any> {
     return null;
   }
 }
-async function waDelete(path: string): Promise<any> {
-  try {
-    const res = await api.delete(`/whatsapp${path}`);
-    return res.data;
-  } catch (e: any) {
-    console.warn(`[WA DELETE] ${path}`, e?.response?.status, e?.message);
-    return null;
-  }
-}
-
 // QR is returned as JSON { qrDataUrl: string | null, status: string }
 async function fetchQrDataUrl(sessionId: string): Promise<string | null> {
   try {
