@@ -1,25 +1,9 @@
-# FROM node:18-alpine
+FROM node:22-slim
 
-# WORKDIR /app
-
-# COPY package*.json ./
-# RUN npm ci
-
-# COPY . .
-
-# RUN npm run build
-
-# EXPOSE 5000
-
-# CMD ["npm", "start"]
-
-FROM node:18-slim
-
-# Install Chromium and dependencies
+# Install Chromium and required system libs for Puppeteer/whatsapp-web.js
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
-    libappindicator3-1 \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -32,23 +16,31 @@ RUN apt-get update && apt-get install -y \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
+    libxss1 \
+    libxtst6 \
     xdg-utils \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Skip Puppeteer's bundled Chrome, use system Chromium instead
+# Use system Chromium — skip Puppeteer's bundled Chrome download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_ENV=production
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+# --include=dev so prisma CLI and tsc are available at build time
+RUN npm install --include=dev
+
+COPY prisma ./prisma
+RUN npx prisma generate
 
 COPY . .
-
 RUN npm run build
 
 EXPOSE 5000
 
-CMD ["npm", "start"]
+# db push at startup so schema is always in sync with Neon
+CMD npx prisma db push --accept-data-loss && node dist/index.js
