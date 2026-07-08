@@ -10,3 +10,6 @@ yarn-debug.log*
 yarn-error.log*
 .vscode
 .idea
+__MACOSX/
+._*
+.DS_Store
