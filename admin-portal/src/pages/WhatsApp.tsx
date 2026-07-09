@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   PlusCircle, QrCode, CheckCircle, RefreshCw, Trash2, LogOut,
-  MessageSquare, Loader2, AlertTriangle,
+  MessageSquare, Loader2, AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import api from '../services/api';
 
@@ -193,6 +193,19 @@ export default function WhatsApp() {
     await loadSessions();
   };
 
+  // Restart a disconnected session in-place (upserts the DB record and re-calls Baileys)
+  const handleReconnect = async (session: WASession) => {
+    try {
+      // Use sessionId as name so normalizeSessionId on the backend matches the existing record
+      await api.post('/whatsapp/sessions', { name: session.sessionId });
+      await loadSessions();
+      setShowQrFor(session.sessionId);
+      setTimeout(() => fetchQrOnce(session.sessionId), 2000);
+    } catch (err) {
+      console.error('Failed to reconnect', err);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -290,6 +303,18 @@ export default function WhatsApp() {
                         ? ` — Last active: ${new Date(session.lastActiveAt).toLocaleString()}`
                         : ''}
                     </span>
+                  </div>
+                )}
+
+                {/* Disconnected / failed — show Reconnect button */}
+                {(st === 'disconnected' || st === 'auth_failed') && (
+                  <div className="mb-3">
+                    <button
+                      onClick={() => handleReconnect(session)}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors"
+                    >
+                      <RotateCcw className="w-4 h-4" /> Reconnect &amp; Get QR
+                    </button>
                   </div>
                 )}
 
