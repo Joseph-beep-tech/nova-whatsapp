@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Loader2, CheckCircle2, RefreshCw, WifiOff } from 'lucide-react';
+import { MessageSquare, Loader2, CheckCircle2, RefreshCw, WifiOff, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
 
-type Phase = 'idle' | 'loading' | 'qr' | 'connected';
+type Phase = 'idle' | 'loading' | 'qr' | 'connected' | 'error';
 
 const SESSION = 'novago-main';
 
@@ -11,10 +11,12 @@ export default function WhatsApp() {
   const [qrUrl, setQrUrl]       = useState<string | null>(null);
   const [phone, setPhone]       = useState('');
   const [starting, setStarting] = useState(false);
-  const pollRef = useRef<number | null>(null);
+  const pollRef    = useRef<number | null>(null);
+  const timeoutRef = useRef<number | null>(null);
 
   const stopPoll = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (pollRef.current)    { clearInterval(pollRef.current);  pollRef.current    = null; }
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
   };
 
   const poll = async () => {
@@ -45,7 +47,12 @@ export default function WhatsApp() {
 
   const startPoll = () => {
     stopPoll();
-    pollRef.current = window.setInterval(poll, 3000);
+    pollRef.current    = window.setInterval(poll, 3000);
+    // Give up after 40 s and show an actionable error
+    timeoutRef.current = window.setTimeout(() => {
+      stopPoll();
+      setPhase('error');
+    }, 40_000);
   };
 
   // Check for an existing live session on mount
@@ -178,6 +185,28 @@ export default function WhatsApp() {
                 Restart
               </button>
             </div>
+          </>
+        )}
+
+        {/* ── ERROR (QR timed out) ── */}
+        {phase === 'error' && (
+          <>
+            <AlertTriangle className="w-14 h-14 text-amber-400 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-gray-900 mb-2">QR code not generated</h2>
+            <p className="text-gray-500 text-sm mb-2">
+              The WhatsApp engine is taking too long to respond.
+            </p>
+            <p className="text-gray-400 text-xs mb-8">
+              Check the <strong>dependable-surprise</strong> service logs on Railway for connection errors,
+              then try again.
+            </p>
+            <button
+              onClick={handleConnect}
+              disabled={starting}
+              className="w-full py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {starting ? 'Starting…' : 'Try Again'}
+            </button>
           </>
         )}
 

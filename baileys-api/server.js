@@ -5,6 +5,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
+  Browsers,
 } = require('@whiskeysockets/baileys')
 const qrcode = require('qrcode')
 const pino = require('pino')
@@ -105,12 +106,13 @@ async function startSession(sessionId) {
 
   const socket = makeWASocket({
     auth: authState,
-    printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
-    browser: ['NovaGo', 'Chrome', '120.0'],
-    connectTimeoutMs: 30_000,
-    retryRequestDelayMs: 2_000,
-    maxMsgRetryCount: 2,
+    printQRInTerminal: true,           // log QR to Railway console for debugging
+    logger: pino({ level: 'warn' }),   // surface warnings/errors in Railway logs
+    browser: Browsers.ubuntu('Chrome'),
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 0,
+    retryRequestDelayMs: 3_000,
+    maxMsgRetryCount: 3,
   })
 
   sessionData.socket = socket
