@@ -4,11 +4,14 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
-    && git config --global url."https://".insteadOf ssh://
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
 
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --omit=dev
 
 COPY server.js ./
 
