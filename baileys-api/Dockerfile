@@ -4,8 +4,10 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
-RUN npm install --production --ignore-scripts
+RUN npm install --production
 
 COPY server.js ./
 
