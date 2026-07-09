@@ -31,7 +31,10 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
-app.use(cors());
+app.use(cors({
+  origin: (origin, cb) => cb(null, true), // allow all origins — restrict after go-live
+  credentials: true,
+}));
 app.use(express.json());
 
 // ── Database ──────────────────────────────────────────────────────────────────
