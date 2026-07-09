@@ -153,10 +153,12 @@ async function startSession(sessionId) {
 async function destroySession(sessionId) {
   const s = sessions.get(sessionId)
   if (s?.socket) {
-    try { await s.socket.logout() } catch {}
     try { s.socket.end() } catch {}
   }
   sessions.delete(sessionId)
+  // Wipe auth credentials so the next startSession always generates a fresh QR
+  const authDir = path.join(SESSIONS_PATH, sessionId)
+  try { fs.rmSync(authDir, { recursive: true, force: true }) } catch {}
 }
 
 // ── Restore sessions that were saved to disk ──────────────────────────────────
