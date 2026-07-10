@@ -4,6 +4,7 @@ const express = require('express')
 const {
   default: makeWASocket,
   useMultiFileAuthState,
+  fetchLatestBaileysVersion,
   DisconnectReason,
   Browsers,
 } = require('@whiskeysockets/baileys')
@@ -100,13 +101,19 @@ async function startSession(sessionId) {
   fs.mkdirSync(authDir, { recursive: true })
 
   const { state: authState, saveCreds } = await useMultiFileAuthState(authDir)
+  // Baileys ships with a WA web version baked in at release time; WhatsApp
+  // rotates the accepted protocol version frequently, so an unpinned/stale
+  // version gets the connection closed immediately (before a QR is ever
+  // emitted). Always negotiate the current version instead of relying on
+  // the library default.
+  const { version } = await fetchLatestBaileysVersion()
 
   const sessionData = { socket: null, qr: null, state: 'INITIALIZING' }
   sessions.set(sessionId, sessionData)
 
   const socket = makeWASocket({
     auth: authState,
-    printQRInTerminal: true,           // log QR to Railway console for debugging
+    version,
     logger: pino({ level: 'warn' }),   // surface warnings/errors in Railway logs
     browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60_000,

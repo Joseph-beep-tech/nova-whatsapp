@@ -13,3 +13,12 @@ yarn-error.log*
 __MACOSX/
 ._*
 .DS_Store
+
+# WhatsApp engine session/cache artifacts (Puppeteer/Baileys auth state)
+.wa_sessions/
+.wwebjs_cache/
+.wwebjs_auth/
+backend/.wa_sessions/
+backend/.wwebjs_cache/
+backend/.wwebjs_auth/
+baileys-api/sessions/

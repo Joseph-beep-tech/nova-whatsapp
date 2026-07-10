@@ -23,11 +23,6 @@ const NAV_GROUPS = [
       { path: '/restaurants', label: 'Restaurants',   icon: Store },
       { path: '/payments',    label: 'Payments',      icon: CreditCard },
       { path: '/analytics',   label: 'Analytics',     icon: BarChart2 },
-    ],
-  },
-  {
-    label: 'AI Engine',
-    items: [
       { path: '/whatsapp',    label: 'WhatsApp',      icon: MessageSquare, dot: true },
     ],
   },

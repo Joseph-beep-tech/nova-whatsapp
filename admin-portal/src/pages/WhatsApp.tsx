@@ -7,21 +7,24 @@ type Phase = 'idle' | 'loading' | 'qr' | 'connected' | 'error';
 const SESSION = 'novago-main';
 
 export default function WhatsApp() {
-  const [phase, setPhase]       = useState<Phase>('idle');
-  const [qrUrl, setQrUrl]       = useState<string | null>(null);
-  const [phone, setPhone]       = useState('');
-  const [starting, setStarting] = useState(false);
-  const pollRef    = useRef<number | null>(null);
-  const timeoutRef = useRef<number | null>(null);
+  const [phase, setPhase]         = useState<Phase>('idle');
+  const [qrUrl, setQrUrl]         = useState<string | null>(null);
+  const [phone, setPhone]         = useState('');
+  const [starting, setStarting]   = useState(false);
+  const [errorMsg, setErrorMsg]   = useState<string | null>(null);
+  const pollRef        = useRef<number | null>(null);
+  const timeoutRef     = useRef<number | null>(null);
+  const disconnectedCountRef = useRef(0);
 
   const stopPoll = () => {
     if (pollRef.current)    { clearInterval(pollRef.current);  pollRef.current    = null; }
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    disconnectedCountRef.current = 0;
   };
 
   const poll = async () => {
     try {
-      const { data } = await api.get<{ status: string; phone?: string }>(
+      const { data } = await api.get<{ status: string; phone?: string; error?: string }>(
         `/whatsapp/sessions/${SESSION}/status`
       );
       const s = (data.status || '').toLowerCase();
@@ -35,13 +38,31 @@ export default function WhatsApp() {
       }
 
       if (s === 'scan_qr_code') {
+        disconnectedCountRef.current = 0;
         setPhase('qr');
         const qr = await api.get<{ qrDataUrl: string | null }>(
           `/whatsapp/sessions/${SESSION}/qr`
         );
         if (qr.data.qrDataUrl) setQrUrl(qr.data.qrDataUrl);
+        return;
       }
+
+      if (s === 'disconnected') {
+        // Give a couple of ticks of grace — the session can briefly report
+        // "disconnected" right after a reconnect before flipping back to
+        // 'initializing'. But a config error (e.g. WHATSAPP_API_URL not set)
+        // reports the same status every time, so surface it quickly.
+        disconnectedCountRef.current += 1;
+        if (data.error || disconnectedCountRef.current >= 2) {
+          stopPoll();
+          setErrorMsg(data.error || 'The WhatsApp session disconnected unexpectedly.');
+          setPhase('error');
+        }
+        return;
+      }
+
       // else still 'initializing' — keep phase 'loading', keep polling
+      disconnectedCountRef.current = 0;
     } catch { /* retry next tick */ }
   };
 
@@ -51,6 +72,7 @@ export default function WhatsApp() {
     // Give up after 40 s and show an actionable error
     timeoutRef.current = window.setTimeout(() => {
       stopPoll();
+      setErrorMsg(null);
       setPhase('error');
     }, 40_000);
   };
@@ -79,6 +101,7 @@ export default function WhatsApp() {
   const handleConnect = async () => {
     setStarting(true);
     setQrUrl(null);
+    setErrorMsg(null);
     setPhase('loading');
     try {
       // Kill any stale session so Baileys starts fresh and generates a new QR
@@ -194,7 +217,7 @@ export default function WhatsApp() {
             <AlertTriangle className="w-14 h-14 text-amber-400 mx-auto mb-4" />
             <h2 className="text-xl font-bold text-gray-900 mb-2">QR code not generated</h2>
             <p className="text-gray-500 text-sm mb-2">
-              The WhatsApp engine is taking too long to respond.
+              {errorMsg || 'The WhatsApp engine is taking too long to respond.'}
             </p>
             <p className="text-gray-400 text-xs mb-8">
               Check the <strong>dependable-surprise</strong> service logs on Railway for connection errors,
