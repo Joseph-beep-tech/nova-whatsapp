@@ -1,5 +1,0 @@
-[submodule "vendor/whatsapp-api"]
-	path = vendor/whatsapp-api
-	url = https://github.com/kulemantu/wwebjs-api.git
-	branch = main
-

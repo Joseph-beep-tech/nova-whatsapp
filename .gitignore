@@ -22,3 +22,6 @@ backend/.wa_sessions/
 backend/.wwebjs_cache/
 backend/.wwebjs_auth/
 baileys-api/sessions/
+
+.vercel
+.env*
