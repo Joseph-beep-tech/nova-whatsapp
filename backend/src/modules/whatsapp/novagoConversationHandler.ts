@@ -43,7 +43,13 @@ interface ConversationState {
   restaurantId: string;
   cart: CartItem[];
   deliveryAddress?: string;
+  deliveryLocLat?: number;
+  deliveryLocLng?: number;
   customerName?: string;
+  // The customer's *confirmed* M-Pesa-reachable phone — distinct from the raw
+  // WhatsApp JID-derived value, which isn't a real phone number at all for
+  // "@lid" (Linked ID / privacy-mode) chats.
+  customerPhone?: string;
   paymentMethod?: 'mpesa' | 'cash';
   lastUpdated: Date;
 }
@@ -58,9 +64,17 @@ interface LLMAction {
   // Checkout flow
   setDeliveryAddress?: string | null;
   setCustomerName?: string | null;
+  setCustomerPhone?: string | null;
   setPaymentMethod?: 'mpesa' | 'cash' | null;
   confirmOrder?: boolean;
   requestTracking?: boolean;
+}
+
+// A WhatsApp chat JID only carries a real phone number for regular ("@s.whatsapp.net")
+// chats — "@lid" (Linked ID / privacy mode) chats never expose one, so it must be
+// asked for and confirmed in conversation before M-Pesa can be used.
+function isValidKenyanPhone(phone: string): boolean {
+  return /^254(7|1)\d{8}$/.test(phone);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -125,7 +139,9 @@ function buildSystemPrompt(ctx: NovaGoContext, state: ConversationState): string
     BROWSING: 'Help them browse the menu. Show categories or specific items when asked. Answer menu questions with exact prices from the menu JSON.',
     CART: `Items in cart:\n${cartBlock}\n\nOffer to add/remove items, or guide them to checkout by asking for their delivery address.`,
     ADDRESS: `Cart ready:\n${cartBlock}\n\nAsk the customer for their delivery address${ch.lastDeliveryAddress ? ` (suggest previous: ${ch.lastDeliveryAddress})` : ''}.`,
-    CONFIRM: `Confirm the full order:\n${cartBlock}\nDelivery to: ${state.deliveryAddress}\nDelivery fee: ${r.currencySymbol}${r.deliveryFee}\nAsk the customer to confirm.`,
+    CONFIRM: state.customerPhone
+      ? `Confirm the full order AND the customer's details together in one message:\n${cartBlock}\nDelivery to: ${state.deliveryAddress}\nDelivery fee: ${r.currencySymbol}${r.deliveryFee}\nName: ${state.customerName || 'not yet given — politely ask for it as part of this confirmation'}\nPhone: ${state.customerPhone}\n\nAsk the customer to confirm the order AND that their name and phone are correct. Do not set "confirmOrder": true until they explicitly confirm all of this is correct.`
+      : `We don't yet have a valid phone number for this customer (WhatsApp privacy settings can hide it). Before anything else, politely ask for their M-Pesa-reachable phone number (e.g. 07XXXXXXXX) — do not proceed to order confirmation until you have it.`,
     PAYMENT: state.paymentMethod
       ? `The customer already chose to pay via ${state.paymentMethod === 'mpesa' ? 'M-Pesa' : 'Cash on Delivery'}. Set "confirmOrder": true now to finalize this order — do not ask again.`
       : `Ask whether to pay via M-Pesa${aiConfig.mpesaPaybill ? ` (Paybill ${aiConfig.mpesaPaybill})` : ''} or Cash on Delivery.`,
@@ -143,6 +159,7 @@ function buildSystemPrompt(ctx: NovaGoContext, state: ConversationState): string
     '3. Answer FAQs only from the KNOWLEDGE BASE block. If not there, say you do not know.',
     '4. Prices in your reply must match menu JSON exactly — no rounding, no estimation.',
     '5. If the restaurant is closed, inform the customer and do not process new orders.',
+    '6. Only set "confirmOrder": true after the customer has explicitly confirmed their name, phone, delivery address, and order are all correct.',
     '',
     `RESTAURANT: ${r.name} | ${r.cuisine} | Hours: ${r.hours}`,
     `Address: ${r.address} | Delivery fee: ${r.currencySymbol}${r.deliveryFee} | Min order: ${r.currencySymbol}${r.minOrder}`,
@@ -167,6 +184,7 @@ function buildSystemPrompt(ctx: NovaGoContext, state: ConversationState): string
     '  "clearCart": false,',
     '  "setDeliveryAddress": "<address string or null>",',
     '  "setCustomerName": "<name or null>",',
+    '  "setCustomerPhone": "<254XXXXXXXXX formatted phone, or null>",',
     '  "setPaymentMethod": "<mpesa|cash|null>",',
     '  "confirmOrder": false,',
     '  "requestTracking": false',
@@ -272,6 +290,12 @@ class NovaGoConversationHandler {
   private advanceState(state: ConversationState, action: LLMAction): void {
     if (action.setCustomerName) state.customerName = action.setCustomerName;
 
+    if (action.setCustomerPhone) {
+      const cleaned = action.setCustomerPhone.replace(/[\s+-]/g, '');
+      const normalized = cleaned.startsWith('0') ? `254${cleaned.slice(1)}` : cleaned;
+      if (isValidKenyanPhone(normalized)) state.customerPhone = normalized;
+    }
+
     if (action.setDeliveryAddress) {
       state.deliveryAddress = action.setDeliveryAddress;
     }
@@ -333,11 +357,29 @@ class NovaGoConversationHandler {
     messageBody: string;
     apiKey: string;
     priorHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+    location?: { lat: number; lng: number; address: string };
   }): Promise<string | null> {
-    const { restaurantId, sessionId, chatId, customerPhone, messageBody, apiKey, priorHistory } = args;
+    const { restaurantId, sessionId, chatId, customerPhone, messageBody, apiKey, priorHistory, location } = args;
     const startMs = Date.now();
 
     const state = this.getState(chatId, restaurantId);
+
+    // The common case (regular "@s.whatsapp.net" chats) already has a real,
+    // usable phone number from the JID — seed it immediately so there's no
+    // extra question. "@lid" chats fail this check and get asked explicitly
+    // in the CONFIRM step guide instead.
+    if (!state.customerPhone && isValidKenyanPhone(customerPhone)) {
+      state.customerPhone = customerPhone;
+    }
+
+    // A shared WhatsApp location sets the delivery address deterministically —
+    // the LLM only ever sees the human-readable address text (in messageBody),
+    // never raw coordinates, so it converses about it naturally.
+    if (location) {
+      state.deliveryAddress = location.address;
+      state.deliveryLocLat = location.lat;
+      state.deliveryLocLng = location.lng;
+    }
 
     // Build fully-grounded context from DB
     const ctx = await buildNovaGoContext(restaurantId, customerPhone, messageBody);
@@ -385,15 +427,20 @@ class NovaGoConversationHandler {
 
     let finalReply = action.reply || null;
 
-    // Place order when customer confirms
-    if (action.confirmOrder && state.cart.length > 0 && state.deliveryAddress) {
+    // Place order when customer confirms (customerPhone must be a confirmed, valid
+    // number — never the raw JID, which isn't a real phone for "@lid" chats)
+    if (action.confirmOrder && state.cart.length > 0 && state.deliveryAddress && state.customerPhone) {
       try {
         const pm = state.paymentMethod ?? 'cash';
         const placed = await placeWhatsAppOrder({
           restaurantId,
+          sessionId,
+          chatId,
           cart:              state.cart,
           deliveryAddress:   state.deliveryAddress,
-          customerPhone,
+          deliveryLocLat:    state.deliveryLocLat,
+          deliveryLocLng:    state.deliveryLocLng,
+          customerPhone:     state.customerPhone,
           customerName:      state.customerName ?? 'WhatsApp Customer',
           paymentMethod:     pm,
         });
@@ -411,7 +458,9 @@ class NovaGoConversationHandler {
           `Tax (16%): ${sym}${placed.tax.toFixed(0)}`,
           `*Total: ${sym}${placed.total.toFixed(0)}*`,
           `🕐 Estimated delivery: ${placed.etaMinutes} mins`,
-          pm === 'mpesa' && ctx.aiConfig.mpesaPaybill
+          pm === 'mpesa' && placed.stkSent
+            ? `\n📲 We've sent an M-Pesa prompt to your phone — enter your PIN to complete payment of ${sym}${placed.total.toFixed(0)}.`
+            : pm === 'mpesa' && ctx.aiConfig.mpesaPaybill
             ? `\n💳 Pay via M-Pesa Paybill *${ctx.aiConfig.mpesaPaybill}*`
             : pm === 'mpesa' && ctx.aiConfig.mpesaTillNumber
             ? `\n💳 Pay via M-Pesa Till *${ctx.aiConfig.mpesaTillNumber}*`

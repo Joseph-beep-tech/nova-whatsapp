@@ -188,13 +188,21 @@ async function handleInboundMessage(sessionId, msg) {
     ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
     : new Date().toISOString()
 
+  // "Share current location" / a picked place — degreesLatitude/Longitude are
+  // always present; name/address are only set when the customer picked a named
+  // place rather than sharing raw GPS. Backend does any address lookup.
+  const loc = m.locationMessage
+  const location = loc
+    ? { lat: loc.degreesLatitude, lng: loc.degreesLongitude, name: loc.name || null, address: loc.address || null }
+    : undefined
+
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 8_000)
   try {
     const resp = await fetch(`${BACKEND_WEBHOOK_URL}/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
-      body: JSON.stringify({ chatId, isGroup, author, body, hasMedia, messageId, timestamp }),
+      body: JSON.stringify({ chatId, isGroup, author, body, hasMedia, messageId, timestamp, location }),
       signal: controller.signal,
     })
     if (!resp.ok) console.error(`[inbound][${sessionId}] webhook ${resp.status}`)

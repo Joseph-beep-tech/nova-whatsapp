@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { prisma } from '../lib/prisma';
 import { stkPush, normalizePhone } from '../services/mpesa';
+import { sendAndLog } from '../services/whatsappInbox';
 
 const router = Router();
 
@@ -98,6 +99,8 @@ router.post('/mpesa/callback', async (req: Request, res: Response) => {
     });
     if (!payment) return res.json({ ResultCode: 0 });
 
+    const order = await prisma.order.findUnique({ where: { id: payment.orderId } });
+
     if (ResultCode === 0) {
       const items = CallbackMetadata?.Item || [];
       const getVal = (name: string) => items.find((i: any) => i.Name === name)?.Value;
@@ -112,12 +115,36 @@ router.post('/mpesa/callback', async (req: Request, res: Response) => {
         where: { id: payment.orderId },
         data: { paymentStatus: 'paid' },
       });
+
+      if (order?.source === 'whatsapp' && order.whatsappSessionId && order.whatsappChatId) {
+        const session = await prisma.whatsAppSession.findUnique({ where: { sessionId: order.whatsappSessionId } });
+        await sendAndLog({
+          userId: session?.userId ?? null,
+          sessionId: order.whatsappSessionId,
+          chatId: order.whatsappChatId,
+          text: `✅ Payment of KSh${order.total.toFixed(0)} received for order #${order.id.slice(-6).toUpperCase()}. Thank you!`,
+          replyKind: 'ai',
+          isGroup: order.whatsappChatId.endsWith('@g.us'),
+        }).catch((err) => console.error('[mpesa callback] WhatsApp confirmation send failed:', err));
+      }
     } else {
       await prisma.orderPayment.update({ where: { id: payment.id }, data: { status: 'failed' } });
       await prisma.order.update({
         where: { id: payment.orderId },
         data: { paymentStatus: 'failed' },
       });
+
+      if (order?.source === 'whatsapp' && order.whatsappSessionId && order.whatsappChatId) {
+        const session = await prisma.whatsAppSession.findUnique({ where: { sessionId: order.whatsappSessionId } });
+        await sendAndLog({
+          userId: session?.userId ?? null,
+          sessionId: order.whatsappSessionId,
+          chatId: order.whatsappChatId,
+          text: `⚠️ Your M-Pesa payment for order #${order.id.slice(-6).toUpperCase()} wasn't completed (${ResultDesc || 'cancelled or failed'}). Reply *cash* to pay on delivery instead, or try *mpesa* again.`,
+          replyKind: 'ai',
+          isGroup: order.whatsappChatId.endsWith('@g.us'),
+        }).catch((err) => console.error('[mpesa callback] WhatsApp failure notice send failed:', err));
+      }
     }
 
     res.json({ ResultCode: 0, ResultDesc: 'Accepted' });

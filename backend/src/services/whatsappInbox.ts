@@ -9,6 +9,7 @@
 import { prisma } from '../lib/prisma';
 import { decrypt } from '../utils/credentialsCrypto';
 import { novaGoHandler } from '../modules/whatsapp/novagoConversationHandler';
+import { Prisma } from '@prisma/client';
 
 const WA_API_URL = (process.env.WHATSAPP_API_URL || '').replace(/\/$/, '');
 
@@ -27,6 +28,7 @@ export interface PersistMessageInput {
   messageId: string | null;
   replyKind: ReplyKind;
   timestamp: Date;
+  metadata?: Record<string, unknown>;
 }
 
 export async function persistMessage(data: PersistMessageInput): Promise<void> {
@@ -47,6 +49,7 @@ export async function persistMessage(data: PersistMessageInput): Promise<void> {
         replyKind: data.replyKind || null,
         messageId: data.messageId,
         timestamp: data.timestamp,
+        metadata: data.metadata as Prisma.InputJsonValue | undefined,
       },
     });
   } catch (err) {
@@ -131,8 +134,9 @@ export async function respondAsRestaurantAI(args: {
   chatId: string;
   body: string;
   isGroup: boolean;
+  location?: { lat: number; lng: number; address: string };
 }): Promise<void> {
-  const { userId, sessionId, restaurantId, chatId, body, isGroup } = args;
+  const { userId, sessionId, restaurantId, chatId, body, isGroup, location } = args;
 
   try {
     const creds = await prisma.aICredentials.findFirst({ where: { userId } });
@@ -171,6 +175,7 @@ export async function respondAsRestaurantAI(args: {
       messageBody: body,
       apiKey,
       priorHistory,
+      location,
     });
 
     if (reply) {

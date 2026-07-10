@@ -9,6 +9,7 @@
 import { prisma } from '../../lib/prisma';
 import type { CartItem } from './novagoConversationHandler';
 import { Prisma } from '@prisma/client';
+import { stkPush } from '../../services/mpesa';
 
 export interface PlacedOrderResult {
   orderId: string;
@@ -19,18 +20,26 @@ export interface PlacedOrderResult {
   total: number;
   etaMinutes: number;
   paymentMethod: 'mpesa' | 'cash';
+  stkSent: boolean;
 }
 
 export async function placeWhatsAppOrder(args: {
   restaurantId: string;
+  sessionId: string;
+  chatId: string;
   cart: CartItem[];
   deliveryAddress: string;
+  deliveryLocLat?: number;
+  deliveryLocLng?: number;
   customerPhone: string;
   customerName: string;
   paymentMethod: 'mpesa' | 'cash';
   specialInstructions?: string;
 }): Promise<PlacedOrderResult> {
-  const { restaurantId, cart, deliveryAddress, customerPhone, customerName, paymentMethod, specialInstructions } = args;
+  const {
+    restaurantId, sessionId, chatId, cart, deliveryAddress, deliveryLocLat, deliveryLocLng,
+    customerPhone, customerName, paymentMethod, specialInstructions,
+  } = args;
 
   if (!cart.length) throw new Error('Cart is empty');
 
@@ -70,13 +79,40 @@ export async function placeWhatsAppOrder(args: {
       subtotal, deliveryFee, tax, total,
       status: 'pending',
       customerName, customerPhone, deliveryAddress,
+      deliveryLocLat, deliveryLocLng,
       paymentMethod, paymentStatus: 'pending',
       source: 'whatsapp', etaMinutes,
       specialInstructions,
       statusHistory,
+      whatsappSessionId: sessionId,
+      whatsappChatId: chatId,
     },
   });
 
   const orderNumber = order.id.slice(-6).toUpperCase();
-  return { orderId: order.id, orderNumber, subtotal, deliveryFee, tax, total, etaMinutes, paymentMethod };
+
+  const payment = await prisma.orderPayment.create({
+    data: { orderId: order.id, amount: total, method: paymentMethod, status: 'pending' },
+  });
+
+  let stkSent = false;
+  if (paymentMethod === 'mpesa') {
+    try {
+      const stk = await stkPush({
+        phoneNumber: customerPhone,
+        amount: total,
+        accountReference: `NovaGo-${orderNumber}`,
+        transactionDesc: `Order payment for ${customerName}`,
+      });
+      await prisma.orderPayment.update({
+        where: { id: payment.id },
+        data: { reference: stk.CheckoutRequestID },
+      });
+      stkSent = true;
+    } catch (err) {
+      console.error(`[novagoOrderBridge] STK push failed for order ${order.id}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  return { orderId: order.id, orderNumber, subtotal, deliveryFee, tax, total, etaMinutes, paymentMethod, stkSent };
 }

@@ -113,6 +113,8 @@ model Order {
   statusHistory       Json     @default("[]")
   source              String   @default("web")
   cancellationReason  String?
+  whatsappSessionId   String?
+  whatsappChatId      String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

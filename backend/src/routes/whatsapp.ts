@@ -17,6 +17,7 @@ import {
   persistMessage, isAiPaused, setAiPaused, respondAsRestaurantAI,
   listChats, listMessages, getLead, listLeads,
 } from '../services/whatsappInbox';
+import { reverseGeocode } from '../services/geocoding';
 
 const router = Router();
 
@@ -56,11 +57,24 @@ function verifyWebhookSecret(req: Request, res: Response, next: NextFunction) {
 router.post('/webhook/inbound/:sessionId', verifyWebhookSecret, async (req: Request, res: Response) => {
   res.status(200).json({ ok: true }); // ack immediately — baileys-api doesn't await this
   const { sessionId } = req.params;
-  const { chatId, isGroup, author, body, hasMedia, messageId, timestamp } = req.body || {};
+  const { chatId, isGroup, author, body, hasMedia, messageId, timestamp, location } = req.body || {};
 
   try {
     const session = await prisma.whatsAppSession.findUnique({ where: { sessionId } });
     if (!session || !chatId) return;
+
+    let effectiveBody: string = body || '';
+    let locationForHandler: { lat: number; lng: number; address: string } | undefined;
+
+    if (location && typeof location.lat === 'number' && typeof location.lng === 'number') {
+      const address =
+        location.address ||
+        location.name ||
+        (await reverseGeocode(location.lat, location.lng)) ||
+        `${location.lat}, ${location.lng}`;
+      if (!effectiveBody) effectiveBody = `📍 Shared current location: ${address}`;
+      locationForHandler = { lat: location.lat, lng: location.lng, address };
+    }
 
     await persistMessage({
       userId: session.userId,
@@ -70,14 +84,15 @@ router.post('/webhook/inbound/:sessionId', verifyWebhookSecret, async (req: Requ
       fromMe: false,
       direction: 'in',
       author: author || null,
-      body: body || '',
+      body: effectiveBody,
       hasMedia: !!hasMedia,
       messageId: messageId || null,
       replyKind: null,
       timestamp: timestamp ? new Date(timestamp) : new Date(),
+      metadata: location ? { lat: location.lat, lng: location.lng } : undefined,
     });
 
-    if (!body || !session.restaurantId) return; // no restaurant linked — capture only
+    if (!effectiveBody || !session.restaurantId) return; // no restaurant linked — capture only
     if (await isAiPaused(sessionId, chatId)) return; // admin took over this chat
 
     await respondAsRestaurantAI({
@@ -85,8 +100,9 @@ router.post('/webhook/inbound/:sessionId', verifyWebhookSecret, async (req: Requ
       sessionId,
       restaurantId: session.restaurantId,
       chatId,
-      body,
+      body: effectiveBody,
       isGroup: !!isGroup,
+      location: locationForHandler,
     });
   } catch (err) {
     console.error(`[whatsapp][webhook][${sessionId}]`, err);
