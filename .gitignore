@@ -25,3 +25,5 @@ baileys-api/sessions/
 
 .vercel
 .env*
+!.env.example
+!**/.env.example

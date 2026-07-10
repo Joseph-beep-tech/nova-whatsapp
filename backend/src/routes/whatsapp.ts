@@ -10,9 +10,13 @@
  * wwebjs-api service.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { prisma } from '../lib/prisma';
+import {
+  persistMessage, isAiPaused, setAiPaused, respondAsRestaurantAI,
+  listChats, listMessages, getLead, listLeads,
+} from '../services/whatsappInbox';
 
 const router = Router();
 
@@ -39,6 +43,99 @@ function normalizeSessionId(raw?: string): string {
 function waHeaders(): Record<string, string> {
   return { 'x-api-key': WA_API_KEY };
 }
+
+// ── Inbound webhook (service-to-service, from baileys-api) ───────────────────
+
+function verifyWebhookSecret(req: Request, res: Response, next: NextFunction) {
+  if (!WA_API_KEY || req.headers['x-api-key'] !== WA_API_KEY) {
+    return res.status(403).json({ error: 'Invalid webhook secret' });
+  }
+  next();
+}
+
+router.post('/webhook/inbound/:sessionId', verifyWebhookSecret, async (req: Request, res: Response) => {
+  res.status(200).json({ ok: true }); // ack immediately — baileys-api doesn't await this
+  const { sessionId } = req.params;
+  const { chatId, isGroup, author, body, hasMedia, messageId, timestamp } = req.body || {};
+
+  try {
+    const session = await prisma.whatsAppSession.findUnique({ where: { sessionId } });
+    if (!session || !chatId) return;
+
+    await persistMessage({
+      userId: session.userId,
+      sessionId,
+      chatId,
+      isGroup: !!isGroup,
+      fromMe: false,
+      direction: 'in',
+      author: author || null,
+      body: body || '',
+      hasMedia: !!hasMedia,
+      messageId: messageId || null,
+      replyKind: null,
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+    });
+
+    if (!body || !session.restaurantId) return; // no restaurant linked — capture only
+    if (await isAiPaused(sessionId, chatId)) return; // admin took over this chat
+
+    await respondAsRestaurantAI({
+      userId: session.userId,
+      sessionId,
+      restaurantId: session.restaurantId,
+      chatId,
+      body,
+      isGroup: !!isGroup,
+    });
+  } catch (err) {
+    console.error(`[whatsapp][webhook][${sessionId}]`, err);
+  }
+});
+
+// ── Chats, messages, leads (DB-backed) ─────────────────────────────────────────
+
+router.get('/sessions/:sessionId/chats', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const chats = await listChats(req.userId!, req.params.sessionId);
+  if (chats === null) return res.status(404).json({ error: 'Session not found' });
+  return res.json(chats);
+});
+
+router.get('/sessions/:sessionId/chats/:chatId/messages', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const messages = await listMessages(req.userId!, req.params.sessionId, req.params.chatId, 100);
+  if (messages === null) return res.status(404).json({ error: 'Session not found' });
+  return res.json(messages);
+});
+
+router.get('/sessions/:sessionId/chats/:chatId/lead', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const lead = await getLead(req.userId!, req.params.sessionId, req.params.chatId);
+  if (!lead) return res.status(404).json({ error: 'No lead for this chat' });
+  return res.json(lead);
+});
+
+router.post('/sessions/:sessionId/chats/:chatId/resume-ai', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const session = await prisma.whatsAppSession.findFirst({
+    where: { sessionId: req.params.sessionId, userId: req.userId! },
+  });
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  await setAiPaused(req.params.sessionId, req.params.chatId, false);
+  return res.json({ ok: true });
+});
+
+router.get('/leads', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
+  return res.json(await listLeads(req.userId!, { sessionId }));
+});
+
+router.patch('/sessions/:sessionId/restaurant', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const { restaurantId } = req.body || {};
+  const updated = await prisma.whatsAppSession.updateMany({
+    where: { sessionId: req.params.sessionId, userId: req.userId! },
+    data: { restaurantId: restaurantId || null },
+  });
+  if (updated.count === 0) return res.status(404).json({ error: 'Session not found' });
+  return res.json({ ok: true, restaurantId: restaurantId || null });
+});
 
 // ── Session listing (DB-backed for user isolation) ────────────────────────────
 
@@ -245,17 +342,32 @@ router.post('/sessions/:sessionId/messages', authMiddleware, async (req: AuthReq
       return res.status(503).json({ error: 'WHATSAPP_API_URL not configured' });
     }
 
+    const session = await prisma.whatsAppSession.findFirst({ where: { sessionId, userId: req.userId! } });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const chatId: string = String(to).includes('@') ? String(to) : `${to}@s.whatsapp.net`;
+    const isGroup = chatId.endsWith('@g.us');
+
     const resp = await fetch(
       `${WA_API_URL}/client/sendMessage/${encodeURIComponent(sessionId)}`,
       {
         method: 'POST',
         headers: { ...waHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: `${to}@c.us`, contentType: 'string', content: text }),
+        body: JSON.stringify({ chatId, contentType: 'string', content: text }),
       }
     );
 
     const data = await resp.json().catch(() => ({}));
-    return res.status(resp.ok ? 200 : resp.status).json(data);
+    if (!resp.ok) return res.status(resp.status).json(data);
+
+    await persistMessage({
+      userId: session.userId, sessionId, chatId, isGroup, fromMe: true, direction: 'out',
+      author: null, body: text, hasMedia: false, messageId: null, replyKind: 'manual',
+      timestamp: new Date(),
+    });
+    await setAiPaused(sessionId, chatId, true); // manual reply = takeover
+
+    return res.status(200).json(data);
   } catch (err) {
     console.error('[whatsapp][send]', err);
     return res.status(503).json({ error: 'WhatsApp API unreachable' });

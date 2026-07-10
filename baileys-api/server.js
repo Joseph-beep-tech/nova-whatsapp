@@ -19,6 +19,7 @@ app.use(express.json())
 const PORT = process.env.PORT || 3000
 const API_KEY = process.env.API_KEY || ''
 const SESSIONS_PATH = process.env.SESSIONS_PATH || path.join(__dirname, 'sessions')
+const BACKEND_WEBHOOK_URL = (process.env.BACKEND_WEBHOOK_URL || '').replace(/\/$/, '')
 
 // sessionId → { socket, qr, state }
 const sessions = new Map()
@@ -125,6 +126,14 @@ async function startSession(sessionId) {
   sessionData.socket = socket
   socket.ev.on('creds.update', saveCreds)
 
+  socket.ev.on('messages.upsert', ({ messages, type }) => {
+    if (type !== 'notify') return
+    for (const msg of messages) {
+      handleInboundMessage(sessionId, msg).catch(err =>
+        console.error(`[inbound][${sessionId}]`, err.message))
+    }
+  })
+
   socket.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
       sessionData.qr = qr
@@ -156,6 +165,42 @@ async function startSession(sessionId) {
       }
     }
   })
+}
+
+// ── Inbound messages: forward to backend for persistence + AI reply ──────────
+async function handleInboundMessage(sessionId, msg) {
+  if (msg.key?.fromMe || !msg.key?.remoteJid) return
+  if (!BACKEND_WEBHOOK_URL) return
+
+  const chatId = msg.key.remoteJid
+  const isGroup = chatId.endsWith('@g.us')
+  const author = isGroup ? (msg.key.participant || null) : null
+  const m = msg.message || {}
+  const body =
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    ''
+  const hasMedia = !!(m.imageMessage || m.videoMessage || m.audioMessage || m.documentMessage || m.stickerMessage)
+  const messageId = msg.key.id || null
+  const timestamp = msg.messageTimestamp
+    ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
+    : new Date().toISOString()
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8_000)
+  try {
+    const resp = await fetch(`${BACKEND_WEBHOOK_URL}/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+      body: JSON.stringify({ chatId, isGroup, author, body, hasMedia, messageId, timestamp }),
+      signal: controller.signal,
+    })
+    if (!resp.ok) console.error(`[inbound][${sessionId}] webhook ${resp.status}`)
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // ── Core: cleanly shut down a session ────────────────────────────────────────

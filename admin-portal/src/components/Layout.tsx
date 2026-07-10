@@ -3,7 +3,7 @@ import { authService } from '../services/auth.service';
 import {
   LayoutDashboard, Store, ShoppingCart, CreditCard, Navigation,
   BarChart2, LogOut, Menu as MenuIcon, Shield,
-  MessageSquare, ChevronDown, Bell, Bike,
+  MessageSquare, ChevronDown, Bell, Bike, Users,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -24,6 +24,8 @@ const NAV_GROUPS = [
       { path: '/payments',    label: 'Payments',      icon: CreditCard },
       { path: '/analytics',   label: 'Analytics',     icon: BarChart2 },
       { path: '/whatsapp',    label: 'WhatsApp',      icon: MessageSquare, dot: true },
+      { path: '/whatsapp/chats/novago-main', label: 'WA Chats', icon: MessageSquare },
+      { path: '/whatsapp/leads', label: 'WA Leads', icon: Users },
     ],
   },
   {

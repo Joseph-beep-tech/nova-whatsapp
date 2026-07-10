@@ -15,6 +15,8 @@ import Riders from './pages/Riders';
 import Analytics from './pages/Analytics';
 import Users from './pages/Users';
 import WhatsApp from './pages/WhatsApp';
+import WhatsAppChats from './pages/WhatsAppChats';
+import WhatsAppLeads from './pages/WhatsAppLeads';
 import KnowledgeBase from './pages/KnowledgeBase';
 import AIConfig from './pages/AIConfig';
 import Reservations from './pages/Reservations';
@@ -54,6 +56,8 @@ function App() {
             <Route path="analytics" element={<Analytics />} />
             <Route path="users" element={<Users />} />
             <Route path="whatsapp" element={<WhatsApp />} />
+            <Route path="whatsapp/chats/:sessionId" element={<WhatsAppChats />} />
+            <Route path="whatsapp/leads" element={<WhatsAppLeads />} />
           </Route>
         </Routes>
       </BrowserRouter>

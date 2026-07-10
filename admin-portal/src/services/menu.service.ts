@@ -3,17 +3,17 @@ import { MenuItem } from '../types';
 
 export const menuService = {
   async getByRestaurant(restaurantId: string): Promise<MenuItem[]> {
-    const response = await api.get<MenuItem[]>(`/api/menus/restaurant/${restaurantId}`);
+    const response = await api.get<MenuItem[]>(`/menus/restaurant/${restaurantId}`);
     return response.data;
   },
 
   async getById(id: string): Promise<MenuItem> {
-    const response = await api.get<MenuItem>(`/api/menus/${id}`);
+    const response = await api.get<MenuItem>(`/menus/${id}`);
     return response.data;
   },
 
   async create(data: FormData): Promise<MenuItem> {
-    const response = await api.post<MenuItem>('/api/menus', data, {
+    const response = await api.post<MenuItem>('/menus', data, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -22,7 +22,7 @@ export const menuService = {
   },
 
   async update(id: string, data: FormData): Promise<MenuItem> {
-    const response = await api.put<MenuItem>(`/api/menus/${id}`, data, {
+    const response = await api.put<MenuItem>(`/menus/${id}`, data, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -31,7 +31,7 @@ export const menuService = {
   },
 
   async delete(id: string): Promise<void> {
-    await api.delete(`/api/menus/${id}`);
+    await api.delete(`/menus/${id}`);
   },
 };
 
