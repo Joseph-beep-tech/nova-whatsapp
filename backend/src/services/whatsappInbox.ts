@@ -136,13 +136,12 @@ export async function respondAsRestaurantAI(args: {
 
   try {
     const creds = await prisma.aICredentials.findFirst({ where: { userId } });
-    if (!creds?.openaiApiKey) {
-      console.warn(`[whatsappInbox][${sessionId}] no OpenAI key for user ${userId}`);
-      return;
-    }
-    const apiKey = decrypt(creds.openaiApiKey);
+    // No route in this codebase currently writes a per-user AICredentials.openaiApiKey,
+    // so that table is empty in practice — fall back to the platform-wide key every
+    // other AI feature here already relies on, rather than silently never replying.
+    const apiKey = creds?.openaiApiKey ? decrypt(creds.openaiApiKey) : (process.env.OPENAI_API_KEY || '');
     if (!apiKey) {
-      console.warn(`[whatsappInbox][${sessionId}] OpenAI key decrypt failed`);
+      console.warn(`[whatsappInbox][${sessionId}] no OpenAI key available for user ${userId}`);
       return;
     }
 
