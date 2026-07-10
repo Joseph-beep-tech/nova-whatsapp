@@ -126,7 +126,9 @@ function buildSystemPrompt(ctx: NovaGoContext, state: ConversationState): string
     CART: `Items in cart:\n${cartBlock}\n\nOffer to add/remove items, or guide them to checkout by asking for their delivery address.`,
     ADDRESS: `Cart ready:\n${cartBlock}\n\nAsk the customer for their delivery address${ch.lastDeliveryAddress ? ` (suggest previous: ${ch.lastDeliveryAddress})` : ''}.`,
     CONFIRM: `Confirm the full order:\n${cartBlock}\nDelivery to: ${state.deliveryAddress}\nDelivery fee: ${r.currencySymbol}${r.deliveryFee}\nAsk the customer to confirm.`,
-    PAYMENT: `Ask whether to pay via M-Pesa${aiConfig.mpesaPaybill ? ` (Paybill ${aiConfig.mpesaPaybill})` : ''} or Cash on Delivery.`,
+    PAYMENT: state.paymentMethod
+      ? `The customer already chose to pay via ${state.paymentMethod === 'mpesa' ? 'M-Pesa' : 'Cash on Delivery'}. Set "confirmOrder": true now to finalize this order — do not ask again.`
+      : `Ask whether to pay via M-Pesa${aiConfig.mpesaPaybill ? ` (Paybill ${aiConfig.mpesaPaybill})` : ''} or Cash on Delivery.`,
     ORDERED: 'Order is placed. Share the order number and ETA. Thank the customer.',
     TRACKING: 'Customer is asking about order status. Report the latest status retrieved.',
   };
