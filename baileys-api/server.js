@@ -175,7 +175,9 @@ async function restoreSessions() {
   if (!fs.existsSync(SESSIONS_PATH)) return
   const entries = fs.readdirSync(SESSIONS_PATH, { withFileTypes: true })
   for (const e of entries) {
-    if (e.isDirectory()) {
+    // Skip ext4's reserved recovery directory that Railway volumes create —
+    // it isn't a session and would otherwise spin up a bogus Baileys socket.
+    if (e.isDirectory() && e.name !== 'lost+found') {
       console.log(`[restore] ${e.name}`)
       await startSession(e.name).catch(err => console.error(`[restore][${e.name}]`, err.message))
     }
