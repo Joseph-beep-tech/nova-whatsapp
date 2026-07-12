@@ -175,6 +175,10 @@ async function handleInboundMessage(sessionId, msg) {
   const chatId = msg.key.remoteJid
   const isGroup = chatId.endsWith('@g.us')
   const author = isGroup ? (msg.key.participant || null) : null
+  // The WhatsApp profile display name — present on every message, even for
+  // "@lid" privacy-mode chats that hide the real phone number, so it's the
+  // one piece of identity we can always auto-capture without asking.
+  const pushName = msg.pushName || null
   const m = msg.message || {}
   const body =
     m.conversation ||
@@ -202,7 +206,7 @@ async function handleInboundMessage(sessionId, msg) {
     const resp = await fetch(`${BACKEND_WEBHOOK_URL}/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
-      body: JSON.stringify({ chatId, isGroup, author, body, hasMedia, messageId, timestamp, location }),
+      body: JSON.stringify({ chatId, isGroup, author, body, hasMedia, messageId, timestamp, location, pushName }),
       signal: controller.signal,
     })
     if (!resp.ok) console.error(`[inbound][${sessionId}] webhook ${resp.status}`)

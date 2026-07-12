@@ -135,8 +135,9 @@ export async function respondAsRestaurantAI(args: {
   body: string;
   isGroup: boolean;
   location?: { lat: number; lng: number; address: string };
+  pushName?: string | null;
 }): Promise<void> {
-  const { userId, sessionId, restaurantId, chatId, body, isGroup, location } = args;
+  const { userId, sessionId, restaurantId, chatId, body, isGroup, location, pushName } = args;
 
   try {
     const creds = await prisma.aICredentials.findFirst({ where: { userId } });
@@ -176,6 +177,7 @@ export async function respondAsRestaurantAI(args: {
       apiKey,
       priorHistory,
       location,
+      pushName,
     });
 
     if (reply) {

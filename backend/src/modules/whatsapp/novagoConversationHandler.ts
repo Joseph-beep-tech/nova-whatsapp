@@ -139,9 +139,11 @@ function buildSystemPrompt(ctx: NovaGoContext, state: ConversationState): string
     BROWSING: 'Help them browse the menu. Show categories or specific items when asked. Answer menu questions with exact prices from the menu JSON.',
     CART: `Items in cart:\n${cartBlock}\n\nOffer to add/remove items, or guide them to checkout by asking for their delivery address.`,
     ADDRESS: `Cart ready:\n${cartBlock}\n\nAsk the customer for their delivery address${ch.lastDeliveryAddress ? ` (suggest previous: ${ch.lastDeliveryAddress})` : ''}.`,
-    CONFIRM: state.customerPhone
-      ? `Confirm the full order AND the customer's details together in one message:\n${cartBlock}\nDelivery to: ${state.deliveryAddress}\nDelivery fee: ${r.currencySymbol}${r.deliveryFee}\nName: ${state.customerName || 'not yet given — politely ask for it as part of this confirmation'}\nPhone: ${state.customerPhone}\n\nAsk the customer to confirm the order AND that their name and phone are correct. Do not set "confirmOrder": true until they explicitly confirm all of this is correct.`
-      : `We don't yet have a valid phone number for this customer (WhatsApp privacy settings can hide it). Before anything else, politely ask for their M-Pesa-reachable phone number (e.g. 07XXXXXXXX) — do not proceed to order confirmation until you have it.`,
+    CONFIRM: !state.customerPhone
+      ? `We don't yet have a valid phone number for this customer (WhatsApp privacy settings can hide it). Before anything else, politely ask for their M-Pesa-reachable phone number (e.g. 07XXXXXXXX) — do not proceed to order confirmation until you have it.`
+      : !state.paymentMethod
+      ? `Confirm the full order AND the customer's details AND ask their payment preference, together in one message:\n${cartBlock}\nDelivery to: ${state.deliveryAddress}\nDelivery fee: ${r.currencySymbol}${r.deliveryFee}\nName: ${state.customerName || 'not yet given — politely ask for it as part of this confirmation'}\nPhone: ${state.customerPhone}\n\nAsk the customer to confirm the order AND that their name and phone are correct, AND ask whether they'll pay via M-Pesa${aiConfig.mpesaPaybill ? ` (Paybill ${aiConfig.mpesaPaybill})` : ''} or Cash on Delivery. Do not set "confirmOrder": true until a payment method is chosen and everything is explicitly confirmed.`
+      : `The customer already chose to pay via ${state.paymentMethod === 'mpesa' ? 'M-Pesa' : 'Cash on Delivery'}. Set "confirmOrder": true now to finalize this order — do not ask again.`,
     PAYMENT: state.paymentMethod
       ? `The customer already chose to pay via ${state.paymentMethod === 'mpesa' ? 'M-Pesa' : 'Cash on Delivery'}. Set "confirmOrder": true now to finalize this order — do not ask again.`
       : `Ask whether to pay via M-Pesa${aiConfig.mpesaPaybill ? ` (Paybill ${aiConfig.mpesaPaybill})` : ''} or Cash on Delivery.`,
@@ -358,8 +360,9 @@ class NovaGoConversationHandler {
     apiKey: string;
     priorHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
     location?: { lat: number; lng: number; address: string };
+    pushName?: string | null;
   }): Promise<string | null> {
-    const { restaurantId, sessionId, chatId, customerPhone, messageBody, apiKey, priorHistory, location } = args;
+    const { restaurantId, sessionId, chatId, customerPhone, messageBody, apiKey, priorHistory, location, pushName } = args;
     const startMs = Date.now();
 
     const state = this.getState(chatId, restaurantId);
@@ -385,9 +388,15 @@ class NovaGoConversationHandler {
     const ctx = await buildNovaGoContext(restaurantId, customerPhone, messageBody);
     if (!ctx) return 'This restaurant is not available at the moment. Please try again later.';
 
-    // Seed customer name from order history if not yet known
+    // Seed customer name — a confirmed name from a past order is authoritative;
+    // otherwise fall back to the WhatsApp profile display name, which is always
+    // available (even for "@lid" chats that hide the real phone number) and
+    // only ever needs confirming, never asking for from scratch.
     if (!state.customerName && ctx.customerHistory.name) {
       state.customerName = ctx.customerHistory.name;
+    }
+    if (!state.customerName && pushName) {
+      state.customerName = pushName;
     }
 
     // Check for simple track request before calling LLM
@@ -427,11 +436,19 @@ class NovaGoConversationHandler {
 
     let finalReply = action.reply || null;
 
+    // The LLM can decide to finalize (confirmOrder:true) without ever having
+    // actually asked about payment method — that must never silently default
+    // to cash. Force the question explicitly instead of placing the order.
+    if (action.confirmOrder && state.cart.length > 0 && state.deliveryAddress && state.customerPhone && !state.paymentMethod) {
+      finalReply = 'Before I place your order — how would you like to pay: *M-Pesa* or *Cash on Delivery*?';
+      action.confirmOrder = false;
+    }
+
     // Place order when customer confirms (customerPhone must be a confirmed, valid
     // number — never the raw JID, which isn't a real phone for "@lid" chats)
-    if (action.confirmOrder && state.cart.length > 0 && state.deliveryAddress && state.customerPhone) {
+    if (action.confirmOrder && state.cart.length > 0 && state.deliveryAddress && state.customerPhone && state.paymentMethod) {
       try {
-        const pm = state.paymentMethod ?? 'cash';
+        const pm = state.paymentMethod;
         const placed = await placeWhatsAppOrder({
           restaurantId,
           sessionId,

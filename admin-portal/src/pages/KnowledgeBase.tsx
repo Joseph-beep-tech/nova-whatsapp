@@ -387,6 +387,12 @@ export default function KnowledgeBase() {
                 </label>
               </div>
 
+              {createMutation.isError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">
+                  <strong>Couldn't save:</strong> {(createMutation.error as any)?.response?.data?.message || (createMutation.error as any)?.message || 'Something went wrong.'}
+                </div>
+              )}
+
               <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
                 <strong>Tip:</strong> The more specific your content, the better the AI responds. Include prices, allergens, delivery zones, opening times, and anything customers ask about.
               </div>

@@ -57,7 +57,7 @@ function verifyWebhookSecret(req: Request, res: Response, next: NextFunction) {
 router.post('/webhook/inbound/:sessionId', verifyWebhookSecret, async (req: Request, res: Response) => {
   res.status(200).json({ ok: true }); // ack immediately — baileys-api doesn't await this
   const { sessionId } = req.params;
-  const { chatId, isGroup, author, body, hasMedia, messageId, timestamp, location } = req.body || {};
+  const { chatId, isGroup, author, body, hasMedia, messageId, timestamp, location, pushName } = req.body || {};
 
   try {
     const session = await prisma.whatsAppSession.findUnique({ where: { sessionId } });
@@ -103,6 +103,7 @@ router.post('/webhook/inbound/:sessionId', verifyWebhookSecret, async (req: Requ
       body: effectiveBody,
       isGroup: !!isGroup,
       location: locationForHandler,
+      pushName: pushName || null,
     });
   } catch (err) {
     console.error(`[whatsapp][webhook][${sessionId}]`, err);

@@ -14,6 +14,10 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
+interface AuthRequest extends Request {
+  userId?: string;
+}
+
 const router = Router();
 router.use(authenticate);
 
@@ -101,7 +105,7 @@ router.get('/knowledge/:restaurantId', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/knowledge', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/knowledge', upload.single('file'), async (req: AuthRequest, res: Response) => {
   try {
     const { restaurantId, title, docType, content } = req.body;
     if (!restaurantId || !title) {
@@ -133,7 +137,7 @@ router.post('/knowledge', upload.single('file'), async (req: Request, res: Respo
         rawContent, fileUrl, fileName, mimeType,
         wordCount: rawContent.split(' ').length,
         status: 'processing',
-        createdBy: (req as unknown as { user: { id: string } }).user.id,
+        createdBy: req.userId!,
       },
     });
 
@@ -241,21 +245,21 @@ router.get('/config/:restaurantId', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/config/:restaurantId', async (req: Request, res: Response) => {
+router.put('/config/:restaurantId', async (req: AuthRequest, res: Response) => {
   try {
     const { upsellRules, voiceLanguages, ...rest } = req.body;
     const config = await prisma.restaurantAIConfig.upsert({
       where: { restaurantId: req.params.restaurantId },
       update: {
         ...rest,
-        updatedBy: (req as unknown as { user: { id: string } }).user.id,
+        updatedBy: req.userId,
         ...(upsellRules !== undefined ? { upsellRules: upsellRules as Prisma.InputJsonValue } : {}),
         ...(voiceLanguages !== undefined ? { voiceLanguages } : {}),
       },
       create: {
         restaurantId: req.params.restaurantId,
         ...rest,
-        updatedBy: (req as unknown as { user: { id: string } }).user.id,
+        updatedBy: req.userId,
         ...(upsellRules !== undefined ? { upsellRules: upsellRules as Prisma.InputJsonValue } : {}),
         ...(voiceLanguages !== undefined ? { voiceLanguages } : {}),
       },
