@@ -1,0 +1,55 @@
+name: rider_app
+description: NovaGo Rider — delivery app for NovaGo restaurant platform riders.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  provider: ^6.1.2
+
+  # Networking
+  dio: ^5.7.0
+
+  # Secure token storage
+  flutter_secure_storage: ^9.2.2
+
+  # Maps (OpenStreetMap — no API key)
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
+  # Location
+  geolocator: ^13.0.2
+  permission_handler: ^11.3.1
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # Tap-to-call / WhatsApp deep links
+  url_launcher: ^6.3.1
+
+  # Formatting
+  intl: ^0.19.0
+
+  # Brand font (matches admin-portal's Inter)
+  google_fonts: ^6.2.1
+
+  # HTTP for OSRM routing (lightweight, no need for dio's interceptors there)
+  http: ^1.2.2
+
+  # firstOrNull and friends
+  collection: ^1.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
