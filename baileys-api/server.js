@@ -23,6 +23,9 @@ const BACKEND_WEBHOOK_URL = (process.env.BACKEND_WEBHOOK_URL || '').replace(/\/$
 
 // sessionId → { socket, qr, state }
 const sessions = new Map()
+// sessionIds intentionally terminated — the reconnect handler checks this so
+// destroySession() doesn't get silently undone by the auto-reconnect logic.
+const terminatedSessions = new Set()
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
 app.use((req, res, next) => {
@@ -98,6 +101,7 @@ app.post('/client/sendMessage/:sessionId', async (req, res) => {
 
 // ── Core: create a Baileys socket for a session ───────────────────────────────
 async function startSession(sessionId) {
+  terminatedSessions.delete(sessionId)
   const authDir = path.join(SESSIONS_PATH, sessionId)
   fs.mkdirSync(authDir, { recursive: true })
 
@@ -150,10 +154,13 @@ async function startSession(sessionId) {
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
       const loggedOut = code === DisconnectReason.loggedOut
-      console.log(`[${sessionId}] Closed — code=${code} loggedOut=${loggedOut}`)
+      const wasTerminated = terminatedSessions.has(sessionId)
+      console.log(`[${sessionId}] Closed — code=${code} loggedOut=${loggedOut} terminated=${wasTerminated}`)
 
-      if (loggedOut) {
-        // Wipe saved credentials and remove from memory
+      if (loggedOut || wasTerminated) {
+        // Wipe saved credentials and remove from memory — never reconnect an
+        // intentional termination or a real logout.
+        terminatedSessions.delete(sessionId)
         fs.rmSync(authDir, { recursive: true, force: true })
         sessions.delete(sessionId)
       } else {
@@ -217,6 +224,7 @@ async function handleInboundMessage(sessionId, msg) {
 
 // ── Core: cleanly shut down a session ────────────────────────────────────────
 async function destroySession(sessionId) {
+  terminatedSessions.add(sessionId)
   const s = sessions.get(sessionId)
   if (s?.socket) {
     try { s.socket.end() } catch {}
