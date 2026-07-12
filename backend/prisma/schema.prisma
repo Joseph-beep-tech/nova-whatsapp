@@ -128,6 +128,7 @@ model Rider {
   name        String
   phone       String
   email       String?
+  password    String?
   status      String   @default("offline")
   currentLat  Float?
   currentLng  Float?

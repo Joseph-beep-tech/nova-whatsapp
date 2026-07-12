@@ -11,7 +11,7 @@ const statusColors: Record<Rider['status'], string> = {
   offline: 'text-gray-500 bg-gray-100',
 };
 
-const emptyForm = { name: '', phone: '', email: '', vehicleType: 'motorcycle' };
+const emptyForm = { name: '', phone: '', email: '', vehicleType: 'motorcycle', password: '' };
 
 export default function Riders() {
   const queryClient = useQueryClient();
@@ -76,6 +76,7 @@ export default function Riders() {
       phone: form.phone.trim(),
       email: form.email.trim() || undefined,
       vehicleType: form.vehicleType,
+      password: form.password.trim() || undefined,
     });
   };
 
@@ -301,6 +302,17 @@ export default function Riders() {
                   <option value="car">Car</option>
                   <option value="van">Van</option>
                 </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Rider App Password</label>
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="Set a password for the rider mobile app"
+                  className="input-field w-full"
+                />
+                <p className="text-xs text-gray-400 mt-1">The rider uses their phone number and this password to log into the delivery app.</p>
               </div>
             </div>
 

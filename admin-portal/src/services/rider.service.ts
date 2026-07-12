@@ -6,6 +6,7 @@ export interface CreateRiderInput {
   phone: string;
   email?: string;
   vehicleType?: string;
+  password?: string;
 }
 
 export const riderService = {

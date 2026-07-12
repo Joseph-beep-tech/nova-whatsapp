@@ -7,10 +7,11 @@ const router = Router();
 // ── GET all orders ─────────────────────────────────────────────────────────────
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { status, restaurantId, limit = '200' } = req.query;
+    const { status, restaurantId, driverId, limit = '200' } = req.query;
     const where: any = {};
     if (status) where.status = status;
     if (restaurantId) where.restaurantId = restaurantId;
+    if (driverId) where.driverId = driverId;
     const orders = await prisma.order.findMany({
       where,
       orderBy: { createdAt: 'desc' },
