@@ -172,7 +172,7 @@ model RestaurantAIConfig {
   orderClosingTime       String?
   ragEnabled             Boolean  @default(true)
   ragTopK                Int      @default(5)
-  ragScoreThreshold      Float    @default(0.72)
+  ragScoreThreshold      Float    @default(0.3)
   mpesaEnabled           Boolean  @default(false)
   mpesaPaybill           String?
   mpesaTillNumber        String?

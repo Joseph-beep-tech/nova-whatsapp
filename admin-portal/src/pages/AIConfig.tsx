@@ -294,10 +294,10 @@ export default function AIConfig() {
                             onChange={(e) => set('ragTopK', Number(e.target.value))} />
                           <div className="flex justify-between text-xs text-gray-400 mt-1"><span>1 (fast)</span><span className="font-bold text-primary-600">{form.ragTopK || 5}</span><span>15 (thorough)</span></div>
                         </Field>
-                        <Field label="Score Threshold" hint="Minimum similarity score to use a chunk (0.65–0.85 recommended)">
-                          <input type="range" min={0.5} max={0.95} step={0.01} className="w-full accent-primary-500" value={form.ragScoreThreshold || 0.72}
+                        <Field label="Score Threshold" hint="Minimum similarity score to use a chunk. OpenAI's embeddings rarely exceed ~0.6 even for strong matches on short text — 0.25–0.4 is the realistic range (0.25–0.35 recommended)">
+                          <input type="range" min={0.1} max={0.7} step={0.01} className="w-full accent-primary-500" value={form.ragScoreThreshold ?? 0.3}
                             onChange={(e) => set('ragScoreThreshold', parseFloat(e.target.value))} />
-                          <div className="flex justify-between text-xs text-gray-400 mt-1"><span>0.5 (loose)</span><span className="font-bold text-primary-600">{(form.ragScoreThreshold || 0.72).toFixed(2)}</span><span>0.95 (strict)</span></div>
+                          <div className="flex justify-between text-xs text-gray-400 mt-1"><span>0.1 (loose)</span><span className="font-bold text-primary-600">{(form.ragScoreThreshold ?? 0.3).toFixed(2)}</span><span>0.7 (strict)</span></div>
                         </Field>
                         <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 flex gap-2">
                           <Info size={14} className="shrink-0 mt-0.5" />
