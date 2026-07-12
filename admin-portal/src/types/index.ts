@@ -107,17 +107,14 @@ export type RiderStatus = 'available' | 'busy' | 'offline';
 export interface Rider {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string;
-  vehicle: string;
-  vehicleNumber: string;
+  vehicleType: string;
   status: RiderStatus;
-  currentLocation?: OrderLocation;
-  currentOrderId?: string;
-  rating: number;
-  totalDeliveries: number;
-  isActive: boolean;
+  currentLat: number | null;
+  currentLng: number | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export type OrderStatus =

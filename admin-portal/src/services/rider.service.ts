@@ -1,10 +1,26 @@
 import api from './api';
 import { Rider } from '../types';
 
+export interface CreateRiderInput {
+  name: string;
+  phone: string;
+  email?: string;
+  vehicleType?: string;
+}
+
 export const riderService = {
   async getAll(): Promise<Rider[]> {
     const response = await api.get<Rider[]>('/riders');
     return response.data;
+  },
+
+  async create(data: CreateRiderInput): Promise<Rider> {
+    const response = await api.post<Rider>('/riders', data);
+    return response.data;
+  },
+
+  async remove(id: string): Promise<void> {
+    await api.delete(`/riders/${id}`);
   },
 
   async updateStatus(id: string, status: Rider['status']): Promise<Rider> {
