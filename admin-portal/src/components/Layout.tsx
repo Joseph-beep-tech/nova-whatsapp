@@ -1,11 +1,22 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from 'react-query';
 import { authService } from '../services/auth.service';
+import { orderService } from '../services/order.service';
+import { connectSocket, disconnectSocket } from '../services/socket.service';
+import { enablePushNotifications, listenForForegroundMessages, isFirebaseConfigured } from '../services/push.service';
+import NotificationToastStack, { ToastItem } from './NotificationToast';
+import { playAlertSound } from '../utils/sound';
+import { Order } from '../types';
 import {
   LayoutDashboard, Store, ShoppingCart, CreditCard, Navigation,
   BarChart2, LogOut, Menu as MenuIcon, Shield,
-  MessageSquare, ChevronDown, Bell, Bike, Users,
+  MessageSquare, ChevronDown, Bell, Bike, Users, BellPlus,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+interface LogEntry extends ToastItem {
+  read: boolean;
+}
 
 const NAV_GROUPS = [
   {
@@ -39,11 +50,109 @@ const NAV_GROUPS = [
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [pushEnabled, setPushEnabled] = useState(
+    typeof Notification !== 'undefined' && Notification.permission === 'granted'
+  );
+  const dismissTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const user = authService.getCurrentUser();
 
   const handleLogout = () => { authService.logout(); navigate('/login'); };
+
+  const dismissToast = (id: string) => {
+    setToasts((t) => t.filter((x) => x.id !== id));
+    clearTimeout(dismissTimers.current[id]);
+    delete dismissTimers.current[id];
+  };
+
+  const pushNotification = (item: Omit<ToastItem, 'id'>) => {
+    const entry: LogEntry = { ...item, id: crypto.randomUUID(), read: false };
+    setToasts((t) => [...t, entry]);
+    setLog((l) => [entry, ...l].slice(0, 20));
+    dismissTimers.current[entry.id] = setTimeout(() => dismissToast(entry.id), 8000);
+  };
+
+  const acceptOrder = async (toast: ToastItem) => {
+    if (!toast.orderId) return;
+    try {
+      await orderService.updateStatus(toast.orderId, 'confirmed');
+      qc.invalidateQueries('orders');
+    } finally {
+      dismissToast(toast.id);
+    }
+  };
+
+  const unreadCount = log.filter((n) => !n.read).length;
+
+  const toggleBell = () => {
+    setBellOpen((open) => !open);
+    if (!bellOpen) setLog((l) => l.map((n) => ({ ...n, read: true })));
+  };
+
+  const handleEnableNotifications = async () => {
+    const enabled = await enablePushNotifications();
+    setPushEnabled(enabled);
+  };
+
+  useEffect(() => {
+    if (!authService.isAuthenticated()) return;
+    const socket = connectSocket();
+
+    const onNewOrder = (order: Order) => {
+      pushNotification({
+        type: 'new-order',
+        title: 'New order',
+        message: `${order.customerName} · KSh ${order.total.toLocaleString()}`,
+        orderId: order.id,
+      });
+      playAlertSound();
+    };
+    const onAssigned = ({ order, rider }: { order: Order; rider: { name: string } }) => {
+      pushNotification({
+        type: 'rider-assigned',
+        title: 'Rider assigned',
+        message: `${rider.name} → order #${order.id.slice(-6).toUpperCase()}`,
+      });
+    };
+    const onNoRider = ({ orderId }: { orderId: string }) => {
+      pushNotification({
+        type: 'no-rider',
+        title: 'No rider available',
+        message: `Order #${orderId.slice(-6).toUpperCase()} is ready — assign a rider manually.`,
+        orderId,
+      });
+    };
+    const onStatus = () => qc.invalidateQueries('orders');
+
+    socket.on('order:new', onNewOrder);
+    socket.on('order:assigned', onAssigned);
+    socket.on('order:no_rider_available', onNoRider);
+    socket.on('order:status', onStatus);
+
+    listenForForegroundMessages((payload) => {
+      pushNotification({
+        type: 'new-order',
+        title: payload.title || 'Notification',
+        message: payload.body || '',
+        orderId: payload.data?.orderId,
+      });
+      playAlertSound();
+    });
+
+    return () => {
+      socket.off('order:new', onNewOrder);
+      socket.off('order:assigned', onAssigned);
+      socket.off('order:no_rider_available', onNoRider);
+      socket.off('order:status', onStatus);
+      disconnectSocket();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isActive = (path: string) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
@@ -136,10 +245,46 @@ export default function Layout() {
 
           {/* Right side */}
           <div className="flex items-center gap-2">
-            <button className="relative p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
-              <Bell size={18} />
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
-            </button>
+            {isFirebaseConfigured() && !pushEnabled && (
+              <button
+                onClick={handleEnableNotifications}
+                className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-900 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <BellPlus size={14} /> Enable notifications
+              </button>
+            )}
+
+            <div className="relative">
+              <button
+                onClick={toggleBell}
+                className="relative p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <Bell size={18} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {bellOpen && (
+                <div className="absolute top-full right-0 mt-1 w-80 bg-white border border-surface-border rounded-xl shadow-card-hover z-50 max-h-96 overflow-y-auto">
+                  <div className="px-3 py-2 border-b border-surface-border">
+                    <p className="text-xs font-semibold text-gray-900">Notifications</p>
+                  </div>
+                  {log.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-6">Nothing yet</p>
+                  ) : (
+                    log.map((n) => (
+                      <div key={n.id} className="px-3 py-2.5 border-b border-surface-border last:border-0">
+                        <p className="text-xs font-semibold text-gray-900">{n.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* User chip */}
             <button
@@ -174,6 +319,8 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      <NotificationToastStack toasts={toasts} onDismiss={dismissToast} onAccept={acceptOrder} />
     </div>
   );
 }

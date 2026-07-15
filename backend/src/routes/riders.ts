@@ -139,6 +139,22 @@ router.patch('/:id/status', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
+// POST /api/riders/:id/fcm-token  (rider app — registers this device for push notifications)
+router.post('/:id/fcm-token', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.userId !== req.params.id) {
+      return res.status(403).json({ message: 'Cannot set another rider\'s push token' });
+    }
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'token is required' });
+    await prisma.rider.update({ where: { id: req.params.id }, data: { fcmToken: token } });
+    res.json({ success: true });
+  } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ message: 'Not found' });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // PATCH /api/riders/:id/location  (called by the rider app — must be the rider themself)
 router.patch('/:id/location', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {

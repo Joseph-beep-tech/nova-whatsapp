@@ -1,8 +1,77 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { prisma } from '../lib/prisma';
+import { emitToAdmins, emitToRider } from '../lib/socket';
+import { sendToAdmins, sendToRider } from '../lib/push';
+import { haversineDistanceKm } from '../utils/geo';
 
 const router = Router();
+
+/**
+ * Shared by the manual "assign rider" route and the auto-assign-on-ready
+ * path so both go through identical state changes + notifications.
+ */
+async function assignRiderToOrder(orderId: string, riderId: string) {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order) throw new Error('Order not found');
+
+  const rider = await prisma.rider.findUnique({ where: { id: riderId } });
+  if (!rider) throw new Error('Rider not found');
+
+  if (order.driverId && order.driverId !== riderId) {
+    await prisma.rider.update({ where: { id: order.driverId }, data: { status: 'available' } });
+  }
+
+  const newStatus = order.status === 'ready' ? 'assigned' : order.status;
+  const updatedOrder = await prisma.order.update({
+    where: { id: orderId },
+    data: { driverId: riderId, status: newStatus },
+  });
+
+  await prisma.rider.update({ where: { id: riderId }, data: { status: 'busy' } });
+
+  emitToAdmins('order:assigned', { order: updatedOrder, rider });
+  emitToRider(riderId, 'order:assigned', { order: updatedOrder, rider });
+  sendToAdmins({
+    title: 'Rider assigned',
+    body: `${rider.name} was assigned to order #${updatedOrder.id.slice(-6).toUpperCase()}.`,
+    data: { orderId: updatedOrder.id },
+  });
+  sendToRider(riderId, {
+    title: 'New delivery assigned',
+    body: `You've been assigned order #${updatedOrder.id.slice(-6).toUpperCase()}.`,
+    data: { orderId: updatedOrder.id },
+  });
+
+  return { order: updatedOrder, rider };
+}
+
+/**
+ * Picks the closest available rider (by straight-line distance to the
+ * restaurant) and assigns them. Leaves the order at 'ready' — untouched —
+ * if no rider is currently available, so the manual dropdown in the admin
+ * portal remains the fallback.
+ */
+async function autoAssignNearestRider(orderId: string) {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order || order.restaurantLocLat == null || order.restaurantLocLng == null) return;
+
+  const candidates = await prisma.rider.findMany({
+    where: { status: 'available', currentLat: { not: null }, currentLng: { not: null } },
+  });
+  if (!candidates.length) {
+    emitToAdmins('order:no_rider_available', { orderId: order.id });
+    return;
+  }
+
+  const restaurantPoint = { lat: order.restaurantLocLat, lng: order.restaurantLocLng };
+  const nearest = candidates.reduce((closest, rider) => {
+    const distance = haversineDistanceKm(restaurantPoint, { lat: rider.currentLat!, lng: rider.currentLng! });
+    return !closest || distance < closest.distance ? { rider, distance } : closest;
+  }, null as { rider: (typeof candidates)[number]; distance: number } | null);
+
+  if (nearest) await assignRiderToOrder(orderId, nearest.rider.id);
+}
 
 // ── GET all orders ─────────────────────────────────────────────────────────────
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
@@ -147,6 +216,13 @@ router.post('/', async (req: Request, res: Response) => {
       },
     });
 
+    emitToAdmins('order:new', order);
+    sendToAdmins({
+      title: 'New order',
+      body: `${order.customerName} · KSh ${order.total.toLocaleString()}`,
+      data: { orderId: order.id },
+    });
+
     res.status(201).json(order);
   } catch (err: any) {
     res.status(400).json({ message: err.message });
@@ -184,7 +260,17 @@ router.patch('/:id/status', authMiddleware, async (req: Request, res: Response) 
       });
     }
 
+    emitToAdmins('order:status', updated);
+    if (updated.driverId) emitToRider(updated.driverId, 'order:status', updated);
+
     res.json(updated);
+
+    // Order just went "ready" with nobody assigned yet — try to auto-assign
+    // the nearest available rider. Runs after the response so a slow rider
+    // lookup never delays the status-update response itself.
+    if (status === 'ready' && !order.driverId) {
+      autoAssignNearestRider(updated.id).catch((err) => console.error('Auto-assign failed:', err));
+    }
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -194,27 +280,12 @@ router.patch('/:id/status', authMiddleware, async (req: Request, res: Response) 
 router.patch('/:id/assign-rider', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { riderId } = req.body;
-    const order = await prisma.order.findUnique({ where: { id: req.params.id } });
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-
-    const rider = await prisma.rider.findUnique({ where: { id: riderId } });
-    if (!rider) return res.status(404).json({ message: 'Rider not found' });
-
-    // Free previous rider if different
-    if (order.driverId && order.driverId !== riderId) {
-      await prisma.rider.update({ where: { id: order.driverId }, data: { status: 'available' } });
-    }
-
-    const newStatus = order.status === 'ready' ? 'assigned' : order.status;
-    const updatedOrder = await prisma.order.update({
-      where: { id: req.params.id },
-      data: { driverId: riderId, status: newStatus },
-    });
-
-    await prisma.rider.update({ where: { id: riderId }, data: { status: 'busy' } });
-
-    res.json({ order: updatedOrder, rider });
+    const result = await assignRiderToOrder(req.params.id, riderId);
+    res.json(result);
   } catch (err: any) {
+    if (err.message === 'Order not found' || err.message === 'Rider not found') {
+      return res.status(404).json({ message: err.message });
+    }
     res.status(500).json({ message: err.message });
   }
 });

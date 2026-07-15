@@ -6,8 +6,10 @@ dotenv.config();
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
+import http from 'http';
 import { connectDB } from './config/database';
 import { errorHandler } from './middleware/auth';
+import { initSocket } from './lib/socket';
 
 // Routes
 import authRoutes from './routes/auth';
@@ -26,6 +28,7 @@ import menuRoutes from './routes/menus';
 import orderRoutes from './routes/orders';
 import riderRoutes from './routes/riders';
 import paymentRoutes from './routes/payments';
+import pushRoutes from './routes/push';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -62,6 +65,7 @@ app.use('/api/menus',       menuRoutes);
 app.use('/api/orders',      orderRoutes);
 app.use('/api/riders',      riderRoutes);
 app.use('/api/payments',    paymentRoutes);
+app.use('/api/push',        pushRoutes);
 
 // ── Health checks ─────────────────────────────────────────────────────────────
 app.get('/health',      (_req: Request, res: Response) => res.json({ status: 'ok' }));
@@ -71,10 +75,14 @@ app.get('/api/health',  (_req: Request, res: Response) => res.json({ status: 'ok
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const httpServer = http.createServer(app);
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`\n🚀  NovaGo backend running → http://localhost:${PORT}`);
   console.log(`📦  Database: ${(process.env.DATABASE_URL || 'not set').replace(/:([^:@]+)@/, ':****@')}`);
   console.log(`🌍  Environment: ${process.env.NODE_ENV || 'development'}\n`);
+  console.log(`🔌  Socket.IO live on the same port`);
 
   console.log(`🔗  WhatsApp API: ${process.env.WHATSAPP_API_URL || '(not configured)'}\n`);
 });
